@@ -1,5 +1,9 @@
-# Omarchy VPN plugin design
+# Native Omarchy VPN panel
 
-Operate-mode, native compact panel for a 13-inch laptop. Quattro supplies bar placement, keyboard panel, font inheritance and theme foreground. Use a restrained CyberGhost yellow only for brand mark and primary action. Status is textual and explicit, separate from next-connection preferences. Country search only exposes discovered CLI data. No fake server counts, speed meters, or false protection claims. Loading, missing dependencies, unknown, disconnected, connected and error states are readable. Native Controls provide keyboard/focus behavior.
+Operate mode for a 13-inch ThinkPad. Preserve the installed Omarchy visual world: `Ui.BarIconButton`, `Ui.Panel`, `Ui.KeyboardPanel`, `Ui.PanelHero`, native buttons, searchable dropdowns, text field, section labels and separators. A 360-unit panel fits to the available screen and scrolls above 550 units. Qt controls own text editing and Tab navigation; Escape closes, and focused controls scroll into view.
 
-Runtime screenshot and typography QA must be performed on Omarchy: this build environment has no Quickshell process.
+Typography uses `Style.font`; spacing, borders, focus, hover and animation come from the shell's controls and tokens. Text uses the popup theme palette in both light and dark themes. CyberGhost yellow is limited to the connected CG mark. All external content is plain text. Connection state, selected next location and last public-IP lookup are separate concepts.
+
+The main action stays disabled until a backend can confirm an actionable state. Loading, unknown, dependency, profile, authorization, location-empty and retry states are explicit. Country/city search uses the native searchable dropdown and exposes only discovered options. Session settings are labelled; unimplemented security/reconnect/server features are described truthfully rather than displayed as working controls.
+
+Source/API and accessibility paths were reviewed using Impeccable. Qt lint resolves installed shell imports but reports dynamic-property warnings. No screenshot was captured and no visual approval is claimed: the managed session cannot reach the host desktop. Contrast, ThinkPad scaling, focus rings, keyboard traversal, dropdown placement, clicks and panel lifecycle remain to be checked once in the existing Omarchy shell, followed by one bounded correction/confirmation pass if needed.

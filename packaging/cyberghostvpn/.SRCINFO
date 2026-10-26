@@ -1,0 +1,26 @@
+pkgbase = cyberghostvpn
+	pkgdesc = CyberGhost CLI, packaged for systemd-resolved (unverified on Arch)
+	pkgver = 1.5.0
+	pkgrel = 3
+	url = https://www.cyberghostvpn.com
+	arch = x86_64
+	license = custom
+	makedepends = patch
+	depends = bash
+	depends = curl
+	depends = glibc
+	depends = zlib
+	depends = python
+	depends = openvpn
+	depends = wireguard-tools
+	depends = systemd-resolvconf
+	options = !strip
+	options = !debug
+	source = https://download.cyberghostvpn.com/linux/cyberghostvpn-ubuntu-22.04-1.5.0.zip
+	source = resolved-only.patch
+	source = omarchy-bridge
+	sha256sums = c7cfd8e685f497ecc957636913bc32f8fa55b6ac0bbf19b2a4ebe64d188d03a6
+	sha256sums = aec59065a5f61d8a18e0ab96a66444a5f5e1d7e5a08c2bc8d812315ac5d6becb
+	sha256sums = 6474287ff9a53a7e1538662a2c9418202722a441b216effb60597ebff4389562
+
+pkgname = cyberghostvpn

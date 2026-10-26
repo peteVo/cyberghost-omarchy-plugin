@@ -1,0 +1,37 @@
+#!/usr/bin/python3 -I
+"""Root-owned Polkit adapter: map the authenticated UID to vendor SUDO_USER."""
+import os
+import pwd
+import re
+import sys
+
+VENDOR = "/usr/local/cyberghost/cyberghostvpn"
+
+
+def main(argv):
+    valid = argv == ["--stop"]
+    if len(argv) in (4, 6):
+        valid = (argv[:2] == ["--traffic", "--country-code"]
+                 and re.fullmatch(r"[A-Z]{2}", argv[2]) is not None
+                 and argv[-1] == "--connect")
+        if len(argv) == 6:
+            valid = valid and argv[3] == "--city" and re.fullmatch(r"[^\W\d_][\w .()'’-]{0,63}", argv[4]) is not None
+    if not valid:
+        raise ValueError("Only a country/city connect or stop operation is allowed")
+    raw_uid = os.environ.get("PKEXEC_UID", "")
+    if os.geteuid() != 0 or not re.fullmatch(r"[0-9]{1,10}", raw_uid) or not 0 < int(raw_uid) < 2**32 - 1:
+        raise ValueError("Launch this adapter through Polkit as a normal user")
+    account = pwd.getpwuid(int(raw_uid))
+    os.execve(VENDOR, [VENDOR, *argv], {
+        "PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C",
+        "HOME": account.pw_dir, "USER": account.pw_name,
+        "LOGNAME": account.pw_name, "SUDO_USER": account.pw_name,
+    })
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except (ValueError, KeyError, OSError):
+        print("CyberGhost authorization adapter refused the request.", file=sys.stderr)
+        sys.exit(1)

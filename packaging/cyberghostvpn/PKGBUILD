@@ -1,0 +1,39 @@
+# Local Omarchy/systemd-resolved variant of the reviewed AUR 1.5.0-1 recipe.
+# Never runs the vendor installer, setup, uninstaller or completion generator.
+pkgname=cyberghostvpn
+pkgver=1.5.0
+pkgrel=3
+pkgdesc='CyberGhost CLI, packaged for systemd-resolved (unverified on Arch)'
+arch=(x86_64)
+url='https://www.cyberghostvpn.com'
+license=(custom)
+depends=(bash curl glibc zlib python openvpn wireguard-tools systemd-resolvconf)
+makedepends=(patch)
+# The PyInstaller payload is appended to the ELF; preserve the vendor binary.
+options=('!strip' '!debug')
+_archive="cyberghostvpn-ubuntu-22.04-${pkgver}"
+source=("https://download.cyberghostvpn.com/linux/${_archive}.zip" 'resolved-only.patch' 'omarchy-bridge')
+sha256sums=('c7cfd8e685f497ecc957636913bc32f8fa55b6ac0bbf19b2a4ebe64d188d03a6'
+            'aec59065a5f61d8a18e0ab96a66444a5f5e1d7e5a08c2bc8d812315ac5d6becb'
+            '6474287ff9a53a7e1538662a2c9418202722a441b216effb60597ebff4389562')
+
+prepare() {
+  cd "${srcdir}/${_archive}"
+  patch -Np1 -i "${srcdir}/resolved-only.patch"
+}
+
+package() {
+  cd "${srcdir}/${_archive}"
+  # Retain the vendor's hardcoded installation path.
+  local target="${pkgdir}/usr/local/cyberghost"
+  install -Dm755 "${srcdir}/omarchy-bridge" "${target}/omarchy-bridge"
+  install -Dm755 cyberghost/cyberghostvpn "${target}/cyberghostvpn"
+  install -Dm755 cyberghost/update-systemd-resolved "${target}/update-systemd-resolved"
+  install -Dm644 cyberghost/openvpn/ca.crt "${target}/openvpn/ca.crt"
+  install -Dm644 cyberghost/openvpn/client.crt "${target}/openvpn/client.crt"
+  install -Dm600 cyberghost/openvpn/client.key "${target}/openvpn/client.key"
+  install -Dm644 cyberghost/wireguard/ca.crt "${target}/wireguard/ca.crt"
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -s /usr/local/cyberghost/cyberghostvpn "${pkgdir}/usr/bin/cyberghostvpn"
+  ln -s /usr/local/cyberghost/update-systemd-resolved "${pkgdir}/usr/bin/update-systemd-resolved"
+}

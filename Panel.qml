@@ -1,49 +1,83 @@
+pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls as Controls
 import qs.Commons
-import qs.Ui
+import qs.Ui as Ui
 
-Panel {
+Ui.Panel {
   id: root
   moduleName: "petevo.cyberghost"
   manageIpc: false
   property var anchorItem: null
   property var hostWidget: null
   property var vpn: null
-  readonly property color ink: root.bar ? root.bar.barForeground : Color.foreground
-  readonly property color muted: Qt.rgba(ink.r, ink.g, ink.b, 0.72)
-  readonly property color gold: "#ffcf36"
+  readonly property color ink: Color.popups.text
   readonly property bool connected: vpn && vpn.snapshot.state === "connected"
+  readonly property bool canDisconnect: vpn && vpn.snapshot.can_disconnect === true
   readonly property bool dynamicReady: vpn && vpn.dynamicMode
-  onDynamicReadyChanged: if (dynamicReady && root.opened) vpn.invoke("countries")
 
   function open() {
     root.controller.show()
-    if (vpn && vpn.dynamicMode) vpn.invoke("countries")
+    if (vpn && !vpn.working) vpn.refresh()
   }
-  function close() { root.controller.hide() }
-  function switchPanel(direction) {
-    return root.bar && typeof root.bar.switchPanelFrom === "function"
-      ? root.bar.switchPanelFrom(root.hostWidget || root, direction) : false
+  function close() {
+    countryPicker.close()
+    cityPicker.close()
+    backendPicker.close()
+    root.controller.hide()
   }
 
-  KeyboardPanel {
+  component Label: Text {
+    textFormat: Text.PlainText
+    color: root.ink
+    font.family: Style.font.family
+    font.pixelSize: Style.font.body
+    wrapMode: Text.Wrap
+    width: parent.width
+  }
+
+  component Action: Ui.Button {
+    foreground: root.ink
+    focusable: true
+    opacity: enabled ? 1 : 0.5
+    Accessible.role: Accessible.Button
+    Accessible.name: text
+  }
+
+  function revealFocus(item) {
+    var ancestor = item
+    while (ancestor && ancestor !== layout) ancestor = ancestor.parent
+    if (!ancestor) return
+    var y = item.mapToItem(layout, 0, 0).y
+    if (y < scroll.contentY) scroll.contentY = y
+    else if (y + item.height > scroll.contentY + scroll.height)
+      scroll.contentY = y + item.height - scroll.height
+  }
+
+  Ui.KeyboardPanel {
     id: popup
     anchorItem: root.anchorItem
     owner: root.hostWidget || root
     bar: root.bar
     open: root.opened
-    focusTarget: catcher
+    focusTarget: content
     contentWidth: popup.fittedContentWidth(Style.space(360))
-    contentHeight: popup.fittedContentHeight(Math.min(layout.implicitHeight, Style.space(560)))
+    contentHeight: popup.fittedContentHeight(Math.min(layout.implicitHeight, Style.space(550)))
 
-    PanelKeyCatcher {
-      id: catcher
+    // Qt Controls own Tab, arrows and text editing; Escape bubbles to this item.
+    Item {
+      id: content
       anchors.fill: parent
-      onCloseRequested: root.close()
-      onTabRequested: function(direction) { root.switchPanel(direction) }
-
+      focus: true
+      Keys.onEscapePressed: root.close()
+      Connections {
+        target: content.Window.window
+        function onActiveFocusItemChanged() {
+          if (content.Window.window) root.revealFocus(content.Window.window.activeFocusItem)
+        }
+      }
       Flickable {
+        id: scroll
         anchors.fill: parent
         contentWidth: width
         contentHeight: layout.implicitHeight
@@ -53,241 +87,152 @@ Panel {
 
         Column {
           id: layout
-          width: parent.width
-          spacing: Style.space(10)
-          Row {
-            spacing: Style.space(9)
-            Rectangle {
-              width: 38
-              height: 38
-              radius: 12
-              color: root.gold
+          width: scroll.width
+          spacing: Style.spacing.controlGap
+
+          Ui.PanelHero {
+            title: "CyberGhost VPN"
+            meta: root.vpn ? root.vpn.stateText : "Checking connection…"
+            foreground: root.ink
+            iconComponent: Component {
               Text {
-                anchors.centerIn: parent
+                textFormat: Text.PlainText
                 text: "CG"
+                font.family: Style.font.family
+                font.pixelSize: Style.font.display
                 font.bold: true
-                font.pixelSize: 15
-                color: "#171818"
-              }
-            }
-            Column {
-              spacing: 3
-              Text {
-                text: "CyberGhost VPN"
-                font.bold: true
-                font.pixelSize: 18
-                color: root.ink
-              }
-              Text {
-                text: root.vpn ? root.vpn.snapshot.state.toUpperCase() + " · " +
-                  (root.dynamicReady ? "Official CLI" : "Manual profile") : "Loading"
-                font.pixelSize: 11
-                color: root.muted
+                color: root.connected ? "#ffcf36" : root.ink
               }
             }
           }
-
-          Rectangle {
+          Ui.PanelSeparator { foreground: root.ink }
+          Action {
             width: parent.width
-            height: 1
-            color: Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.13)
+            text: root.vpn && root.vpn.busy ? root.vpn.stateText : root.canDisconnect ? "Disconnect VPN" : "Connect VPN"
+            enabled: root.vpn && !root.vpn.working && (root.canDisconnect ? true
+              : root.vpn.snapshot.can_connect === true && (!root.dynamicReady || root.vpn.selectedCountry.length > 0))
+            bordered: true
+            foreground: root.ink
+            selected: root.connected
+            onClicked: root.vpn.invoke(root.canDisconnect ? "disconnect" : "connect")
           }
-          Text {
-            width: parent.width
-            text: root.dynamicReady
-              ? "Countries and cities use CyberGhost's official CLI. Tunnel and leak protection still require independent verification."
-              : "Dynamic locations unavailable: CyberGhost does not support its official Linux CLI on Arch. Your imported NetworkManager VPN remains usable below."
-            color: root.muted
-            font.pixelSize: 12
-            wrapMode: Text.Wrap
+          Label {
+            text: root.dynamicReady ? "Experimental CLI mode. Location switching has not been verified on this machine."
+              : "Existing OpenVPN profile. Its imported configuration determines the location."
           }
-
-          Controls.Button {
-            width: parent.width
-            height: 42
-            enabled: root.vpn && !root.vpn.busy && root.vpn.snapshot.backend !== "checking"
-            text: !root.vpn ? "Loading…" : root.vpn.busy ? "Working…"
-                : root.connected ? "Disconnect VPN" : "Connect VPN"
-            font.bold: true
-            onClicked: root.vpn.invoke(root.connected ? "disconnect" : "connect")
-            background: Rectangle {
-              radius: 10
-              color: parent.enabled ? root.gold : Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.13)
-            }
-            contentItem: Text {
-              text: parent.text
-              color: "#161819"
-              font: parent.font
-              horizontalAlignment: Text.AlignHCenter
-              verticalAlignment: Text.AlignVCenter
-            }
-          }
-
-          Column {
-            width: parent.width
-            spacing: Style.space(5)
-            visible: root.dynamicReady
-            Text { text: "LOCATION"; color: root.muted; font.pixelSize: 11; font.bold: true }
-            Controls.TextField {
-              id: searchField
-              width: parent.width
-              placeholderText: "Search countries"
-              Accessible.name: "Search countries"
-            }
-            Column {
-              width: parent.width
-              spacing: 2
-              Repeater {
-                model: root.vpn && root.vpn.discovery.items
-                  ? root.vpn.discovery.items.filter(function(item) {
-                      return (item.name + " " + item.code).toLowerCase().indexOf(
-                        searchField.text.toLowerCase()) >= 0
-                    }).slice(0, 15) : []
-                delegate: Controls.Button {
-                  required property var modelData
-                  width: layout.width
-                  height: 30
-                  text: modelData.name + "  ·  " + modelData.code
-                  font.pixelSize: 12
-                  onClicked: {
-                    root.vpn.selectedCountry = modelData.code
-                    root.vpn.selectedCity = ""
-                    root.vpn.invoke("cities")
-                  }
-                  background: Rectangle {
-                    radius: 7
-                    color: root.vpn.selectedCountry === parent.modelData.code
-                      ? Qt.rgba(root.gold.r, root.gold.g, root.gold.b, 0.18)
-                      : "transparent"
-                  }
-                  contentItem: Text {
-                    text: parent.text
-                    color: root.ink
-                    font: parent.font
-                    verticalAlignment: Text.AlignVCenter
-                    leftPadding: 8
-                  }
-                }
-              }
-            }
-            Text {
-              width: parent.width
-              visible: root.vpn && root.vpn.discovery.reason !== ""
-              text: root.vpn ? root.vpn.discovery.reason : ""
-              color: root.muted
-              font.pixelSize: 11
-              wrapMode: Text.Wrap
-            }
-            Text {
-              text: "SELECTED  ·  " + (root.vpn ? root.vpn.selectedCountry : "")
-              color: root.ink
-              font.pixelSize: 12
-              font.bold: true
-            }
-            Controls.TextField {
-              id: cityField
-              width: parent.width
-              placeholderText: "City (optional · auto select if empty)"
-              text: root.vpn ? root.vpn.selectedCity : ""
-              onTextEdited: root.vpn.selectedCity = text
-              Accessible.name: "City"
-            }
-            Connections {
-              target: root.vpn
-              function onSelectedCityChanged() {
-                if (root.vpn && cityField.text !== root.vpn.selectedCity)
-                  cityField.text = root.vpn.selectedCity
-              }
-            }
-            Row {
-              width: parent.width
-              spacing: Style.space(5)
-              Repeater {
-                model: root.vpn && root.vpn.cities.items ? root.vpn.cities.items.slice(0, 5) : []
-                delegate: Controls.Button {
-                  required property var modelData
-                  text: modelData
-                  font.pixelSize: 11
-                  onClicked: root.vpn.selectedCity = modelData
-                }
-              }
-            }
-            Text {
-              width: parent.width
-              text: root.vpn ? root.vpn.cities.reason : ""
-              visible: text.length > 0
-              wrapMode: Text.Wrap
-              color: root.muted
-              font.pixelSize: 11
-            }
-            Text {
-              width: parent.width
-              text: "Specific servers: unavailable via the documented CLI interface."
-              color: root.muted
-              font.pixelSize: 11
-              wrapMode: Text.Wrap
-            }
-          }
-
-          Column {
-            visible: root.vpn && !root.vpn.dynamicMode
-            width: parent.width
-            spacing: Style.space(5)
-            Text {
-              text: "NETWORKMANAGER PROFILE"
-              color: root.muted
-              font.pixelSize: 11
-              font.bold: true
-            }
-            Controls.TextField {
-              width: parent.width
-              text: root.vpn ? root.vpn.profileName : "openvpn"
-              onTextEdited: root.vpn.profileName = text
-              Accessible.name: "NetworkManager profile name"
-            }
-            Text {
-              width: parent.width
-              text: "Existing profile only. New locations require another authorized configuration."
-              color: root.muted
-              font.pixelSize: 11
-              wrapMode: Text.Wrap
-            }
-          }
-
-          Rectangle {
-            width: parent.width
-            height: 1
-            color: Qt.rgba(root.ink.r, root.ink.g, root.ink.b, 0.13)
-          }
-          Row {
-            spacing: Style.space(8)
-            Controls.Button { text: "Refresh"; enabled: root.vpn && !root.vpn.busy; onClicked: root.vpn.invoke("status") }
-            Controls.Button {
-              text: "Check public IP"
-              enabled: root.connected && !root.vpn.busy
-              onClicked: root.vpn.invoke("ip")
-            }
-          }
-          Text {
-            text: root.vpn && root.vpn.publicIp ? "Public IPv4: " + root.vpn.publicIp : "Public IP: not checked"
-            color: root.ink
-            font.pixelSize: 12
-          }
-          Text {
-            width: parent.width
+          Label {
             visible: root.vpn && root.vpn.message.length > 0
             text: root.vpn ? root.vpn.message : ""
-            color: "#dca06c"
-            wrapMode: Text.Wrap
-            font.pixelSize: 12
+            font.bold: true
+            Accessible.role: Accessible.AlertMessage
           }
-          Text {
+          Action {
+            visible: root.vpn && root.vpn.snapshot.state === "unknown"
+            text: "Retry status"
+            enabled: root.vpn && !root.vpn.working
+            onClicked: root.vpn.refresh()
+          }
+
+          Column {
+            visible: root.dynamicReady
             width: parent.width
-            text: "No kill switch · no DNS/IPv6 leak guarantees · a connected indicator alone does not establish privacy."
-            color: root.muted
-            wrapMode: Text.Wrap
-            font.pixelSize: 10
+            spacing: Style.spacing.controlGap
+            Ui.PanelSectionHeader { text: "Next connection"; foreground: root.ink }
+            Ui.SearchableDropdown {
+              id: countryPicker
+              width: parent.width
+              label: "Country"
+              placeholderText: "Search countries"
+              emptyText: root.vpn && root.vpn.working ? "Loading countries…" : "No countries returned. Refresh to retry."
+              value: root.vpn ? root.vpn.selectedCountry : ""
+              foreground: root.ink
+              enabled: root.vpn && !root.vpn.working
+              options: root.vpn ? root.vpn.discovery.items.map(function(item) { return { value: item.code, label: item.name } }) : []
+              onChanged: function(value) {
+                root.vpn.selectedCountry = value
+                root.vpn.selectedCity = ""
+                root.vpn.invoke("cities")
+              }
+            }
+            Ui.SearchableDropdown {
+              id: cityPicker
+              width: parent.width
+              label: "City"
+              placeholderText: "Search cities"
+              value: root.vpn ? root.vpn.selectedCity : ""
+              foreground: root.ink
+              enabled: root.vpn && !root.vpn.working && root.vpn.selectedCountry.length > 0
+              options: [{ value: "", label: "Automatic server" }].concat(root.vpn ? root.vpn.cities.items.map(function(item) { return { value: item, label: item } }) : [])
+              onChanged: function(value) { root.vpn.selectedCity = value }
+            }
+            Label {
+              text: root.vpn ? root.vpn.discovery.reason || root.vpn.cities.reason : ""
+              visible: text.length > 0
+            }
+            Label { text: "Disconnect before connecting to another location. Individual-server controls await live verification." }
           }
+
+          Ui.PanelSeparator { foreground: root.ink }
+          Ui.PanelSectionHeader { text: "Connection details"; foreground: root.ink }
+          Label { text: "Profile   " + (root.vpn ? root.vpn.profileName : "—") }
+          Label { text: "Protocol  " + (root.vpn && root.vpn.snapshot.protocol ? root.vpn.snapshot.protocol : "Not reported") }
+          Label { text: "Location  " + (root.vpn && root.vpn.snapshot.location ? root.vpn.snapshot.location : "Not reported") }
+          Label { text: "Server    " + (root.vpn && root.vpn.snapshot.server ? root.vpn.snapshot.server : "Not reported") }
+          Label { text: "IPv4      " + (root.vpn && root.vpn.publicIp ? root.vpn.publicIp + " (last lookup)" : "Not checked") }
+          Action {
+            text: "Check public IPv4"
+            enabled: root.connected && root.vpn && !root.vpn.working
+            onClicked: root.vpn.invoke("ip")
+          }
+          Label { text: "Optional: contacts api.ipify.org. Connection status does not verify routing, DNS or your location."; font.pixelSize: Style.font.bodySmall }
+
+          Ui.PanelSeparator { foreground: root.ink }
+          Ui.PanelSectionHeader { text: "Settings & diagnostics"; foreground: root.ink }
+          Ui.Dropdown {
+            id: backendPicker
+            width: parent.width
+            label: "Connection backend"
+            value: root.vpn ? root.vpn.backendMode : "manual-profile"
+            options: root.vpn && root.vpn.hasVendor
+              ? [{ value: "manual-profile", label: "Existing OpenVPN" }, { value: "official-cli", label: "Official CLI · experimental" }]
+              : [{ value: "manual-profile", label: "Existing OpenVPN" }]
+            foreground: root.ink
+            enabled: root.vpn && !root.vpn.working && (root.vpn.snapshot.state === "disconnected" || root.vpn.snapshot.state === "unknown")
+            onChanged: function(value) { root.vpn.selectBackend(value) }
+          }
+          Ui.TextField {
+            id: profileField
+            visible: !root.dynamicReady
+            width: parent.width
+            text: root.vpn ? root.vpn.profileName : "cyberghost"
+            maximumLength: 128
+            placeholderText: "Existing OpenVPN profile name"
+            Accessible.name: "Existing OpenVPN profile name"
+            foreground: root.ink
+            enabled: root.vpn && !root.vpn.working && !root.canDisconnect
+            onAccepted: root.vpn.selectProfile(text)
+          }
+          Action {
+            visible: !root.dynamicReady
+            text: "Use profile"
+            enabled: root.vpn && !root.vpn.working && !root.canDisconnect && profileField.text.length > 0
+            onClicked: root.vpn.selectProfile(profileField.text)
+          }
+          Action {
+            text: root.vpn && root.vpn.working ? "Checking…" : "Refresh diagnostics"
+            enabled: root.vpn && !root.vpn.working
+            onClicked: root.vpn.refresh()
+          }
+          Label {
+            text: root.vpn && root.vpn.hasVendor ? "System CLI detected; its live operation remains unverified."
+              : "Official CLI not detected in a trusted system path. Arch/Omarchy is not a vendor-supported platform."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label {
+            text: "No kill switch. DNS and IPv6 leak protection are untested. Automatic connection and reconnection are unavailable."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label { text: "Settings apply to this shell session."; font.pixelSize: Style.font.bodySmall }
         }
       }
     }

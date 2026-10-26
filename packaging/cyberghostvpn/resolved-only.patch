@@ -1,0 +1,38 @@
+--- a/cyberghost/update-systemd-resolved
++++ b/cyberghost/update-systemd-resolved
+@@ -36,6 +36,9 @@
+ 		useResolved=0
+ 		if command -v resolvectl > /dev/null 2>&1 && systemctl is-active --quiet systemd-resolved 2>/dev/null; then
+ 			useResolved=1
++		else
++			echo "CyberGhost requires active systemd-resolved; refusing to rewrite resolv.conf" >&2
++			return 1
+ 		fi
+ 
+ 		split_into_parts() {
+@@ -65,10 +68,13 @@
+ 					# point the tunnel interface at the VPN DNS and route ALL
+ 					# lookups through it ("~." routing domain)
+ 					if [ -n "$NMSRVRS" ]; then
+-						resolvectl dns "$dev" $NMSRVRS
++						resolvectl dns -- "$dev" $NMSRVRS || return 1
++					else
++						echo "No VPN DNS servers received; refusing to route DNS without them" >&2
++						return 1
+ 					fi
+-					resolvectl domain "$dev" "~." $SRCHS
+-					resolvectl default-route "$dev" true 2>/dev/null || true
++					resolvectl domain -- "$dev" "~." || return 1
++					resolvectl default-route -- "$dev" true || return 1
+ 
+ 				else
+ 
+@@ -94,7 +100,7 @@
+ 				if [ "$useResolved" = "1" ]; then
+ 
+ 					# drop the tunnel interface's DNS settings
+-					resolvectl revert "$dev" 2>/dev/null || true
++					resolvectl revert -- "$dev"
+ 
+ 				else
+ 

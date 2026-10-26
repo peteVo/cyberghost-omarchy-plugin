@@ -1,9 +1,15 @@
 # Agent instructions
 
-- Use Ponytail full: prefer the smallest robust change and native Omarchy/NetworkManager APIs.
-- Use Impeccable Operate mode: accessibility and truthful connection state take priority over decoration.
-- Keep CyberGhost authentication in its official client; never extract vendor application secrets, store plaintext passwords, or guess servers.
-- Do not claim DNS/IPv6 protection or a kill switch until tested on real hardware; do not introduce a privileged writable helper.
-- Run tests with \`python3 -m unittest discover -s tests -v\`, plus \`qmllint\` and \`omarchy plugin validate\` on Omarchy 4.
-- Treat CLI output as untrusted; do not log credentials, tokens, or raw CLI responses.
-- Do not mutate unrelated VPN profiles. The existing \`openvpn\` profile is the fallback.
+- Apply Ponytail Full and Impeccable Operate. Keep native Omarchy APIs and the existing short-lived Python/QML architecture; no permanent daemon or second Quickshell.
+- Read the complete current implementation and Git/PR state before editing. Continue `feat/official-cli-bridge` / draft PR #1; never force-push or merge automatically.
+- The target fallback profile is **cyberghost**, renamed from openvpn. Preserve support for other explicitly selected OpenVPN profile names. Resolve by UUID and reject ambiguous/non-OpenVPN profiles; never change unrelated network connections.
+- Ask for explicit approval before package installation, privileged system changes, authentication, persistent network changes, or disruptive VPN tests. Read-only inspection, repository edits and mocked tests are authorized.
+- Use only the official client authentication flow. Never extract proprietary application secrets, print keys/configuration, store account passwords, or guess servers.
+- `packaging/cyberghostvpn/omarchy-bridge` is a security boundary: root-owned, Python isolated mode, fixed vendor command, strict argument grammar, authenticated Polkit UID mapped with NSS, minimal environment. No user-writable privileged helper or custom Polkit rule. Preserve owner/mode/effective-write checks.
+- The package uses the unchanged checksum-pinned vendor executable and a reviewed resolved-only hook patch. Keep source checksums and `.SRCINFO` synchronized. Build in a scratch directory; never commit vendor binaries, keys, archives, package artifacts or personal diagnostics.
+- Treat all external output as untrusted. Use subprocess argument arrays, timeouts, sanitized errors, strict response validation and the private operation lock. A vendor descendant may survive timeout/helper death; refresh before retrying and do not advertise stronger serialization guarantees.
+- Default to the NetworkManager fallback. Official CLI mode is explicitly experimental until real authenticated country/city output and DE-to-NL connectivity are demonstrated. The bundled 1.5.0 README documents individual-server commands, but server/protocol UI remains unverified and unimplemented.
+- Never infer VPN location, tunnel integrity, DNS/IPv6 protection or a kill switch from an exit code or connected label. Distinguish reported state from verified routing. Public-IP lookup is explicit, IPv4-only and third party.
+- Run `python3 -m unittest discover -s tests -v`, `python3 -m py_compile cg_bridge.py`, `bash -n tools/host-baseline.sh`, `omarchy plugin validate .`, and Qt6 qmllint with the `qs` import mapping documented in README. Set `CG_TEST_PACKAGE` to exercise package tests; otherwise report the skips. No test should use real credentials or change host networking.
+- Verify the rendered native panel in the existing shell when access permits, following Impeccable's bounded inspection workflow. Static lint is not visual evidence. Update README/SECURITY/DESIGN with actual evidence and unresolved blockers.
+- Managed sessions may expose an empty read-only `.git`, remap root ownership to nobody, and deny host sockets/network. Do not bypass the sandbox or weaken runtime security. Use connected GitHub tools for remote state/delivery and report local Git restrictions honestly. Private temporary Git metadata may be used for diff review, with the exact original object hashes verified.
