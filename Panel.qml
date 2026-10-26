@@ -15,6 +15,7 @@ Panel {
   readonly property color gold: "#ffcf36"
   readonly property bool connected: vpn && vpn.snapshot.state === "connected"
   readonly property bool dynamicReady: vpn && vpn.dynamicMode
+  onDynamicReadyChanged: if (dynamicReady && root.opened) vpn.invoke("countries")
 
   function open() {
     root.controller.show()
@@ -184,11 +185,19 @@ Panel {
               font.bold: true
             }
             Controls.TextField {
+              id: cityField
               width: parent.width
               placeholderText: "City (optional · auto select if empty)"
               text: root.vpn ? root.vpn.selectedCity : ""
               onTextEdited: root.vpn.selectedCity = text
               Accessible.name: "City"
+            }
+            Connections {
+              target: root.vpn
+              function onSelectedCityChanged() {
+                if (root.vpn && cityField.text !== root.vpn.selectedCity)
+                  cityField.text = root.vpn.selectedCity
+              }
             }
             Row {
               width: parent.width
