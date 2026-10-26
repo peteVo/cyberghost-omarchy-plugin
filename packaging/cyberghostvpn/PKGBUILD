@@ -2,7 +2,7 @@
 # Never runs the vendor installer, setup, uninstaller or completion generator.
 pkgname=cyberghostvpn
 pkgver=1.5.0
-pkgrel=3
+pkgrel=4
 pkgdesc='CyberGhost CLI, packaged for systemd-resolved (unverified on Arch)'
 arch=(x86_64)
 url='https://www.cyberghostvpn.com'
@@ -15,7 +15,7 @@ _archive="cyberghostvpn-ubuntu-22.04-${pkgver}"
 source=("https://download.cyberghostvpn.com/linux/${_archive}.zip" 'resolved-only.patch' 'omarchy-bridge')
 sha256sums=('c7cfd8e685f497ecc957636913bc32f8fa55b6ac0bbf19b2a4ebe64d188d03a6'
             'aec59065a5f61d8a18e0ab96a66444a5f5e1d7e5a08c2bc8d812315ac5d6becb'
-            '6474287ff9a53a7e1538662a2c9418202722a441b216effb60597ebff4389562')
+            'cbc913befd165f33f654e6af6ef83baf4d5d75da1bbcd291ef026a13671ed5f6')
 
 prepare() {
   cd "${srcdir}/${_archive}"

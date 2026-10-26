@@ -1,37 +1,75 @@
 #!/usr/bin/python3 -I
-"""Root-owned Polkit adapter: map the authenticated UID to vendor SUDO_USER."""
+"""Narrow Polkit adapter for the official client; no credential handling."""
+from contextlib import contextmanager
+import fcntl
 import os
 import pwd
 import re
+import stat
+import subprocess
 import sys
 
 VENDOR = "/usr/local/cyberghost/cyberghostvpn"
 
 
+def validate(argv):
+    if argv == ["--stop"]:
+        return
+    if (len(argv) < 4 or argv[:2] != ["--traffic", "--country-code"]
+            or not re.fullmatch(r"[A-Z]{2}", argv[2]) or argv[-1] != "--connect"):
+        raise ValueError
+    options = argv[3:-1]
+    city = False
+    for flag, pattern in (("--city", r"[^\W\d_][\w .()'’-]{0,63}"),
+                          ("--server", r"[a-z0-9][a-z0-9-]{0,63}")):
+        if options[:1] == [flag]:
+            if len(options) < 2 or not re.fullmatch(pattern, options[1]):
+                raise ValueError
+            if flag == "--city": city = True
+            elif not city: raise ValueError
+            options = options[2:]
+    if options not in ([], ["--wireguard"], ["--openvpn"]):
+        raise ValueError
+
+
+@contextmanager
+def root_lock():
+    fd = os.open("/run/cyberghost-omarchy.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+            raise ValueError
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield fd
+    finally:
+        os.close(fd)
+
+
 def main(argv):
-    valid = argv == ["--stop"]
-    if len(argv) in (4, 6):
-        valid = (argv[:2] == ["--traffic", "--country-code"]
-                 and re.fullmatch(r"[A-Z]{2}", argv[2]) is not None
-                 and argv[-1] == "--connect")
-        if len(argv) == 6:
-            valid = valid and argv[3] == "--city" and re.fullmatch(r"[^\W\d_][\w .()'’-]{0,63}", argv[4]) is not None
-    if not valid:
-        raise ValueError("Only a country/city connect or stop operation is allowed")
+    validate(argv)
     raw_uid = os.environ.get("PKEXEC_UID", "")
     if os.geteuid() != 0 or not re.fullmatch(r"[0-9]{1,10}", raw_uid) or not 0 < int(raw_uid) < 2**32 - 1:
-        raise ValueError("Launch this adapter through Polkit as a normal user")
+        raise ValueError
     account = pwd.getpwuid(int(raw_uid))
-    os.execve(VENDOR, [VENDOR, *argv], {
-        "PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C",
-        "HOME": account.pw_dir, "USER": account.pw_name,
-        "LOGNAME": account.pw_name, "SUDO_USER": account.pw_name,
-    })
+    environment = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C",
+                   "HOME": account.pw_dir, "USER": account.pw_name,
+                   "LOGNAME": account.pw_name, "SUDO_USER": account.pw_name}
+    try:
+        with root_lock():
+            result = subprocess.run([VENDOR, *argv], env=environment, stdin=subprocess.DEVNULL,
+                                    close_fds=True, timeout=45 if argv == ["--stop"] else 120, check=False)
+            return result.returncode
+    except BlockingIOError:
+        print("Another CyberGhost operation is active.", file=sys.stderr)
+        return 75
+    except subprocess.TimeoutExpired:
+        print("CyberGhost operation timed out; refresh connection status.", file=sys.stderr)
+        return 124
 
 
 if __name__ == "__main__":
     try:
-        main(sys.argv[1:])
+        sys.exit(main(sys.argv[1:]))
     except (ValueError, KeyError, OSError):
         print("CyberGhost authorization adapter refused the request.", file=sys.stderr)
         sys.exit(1)
