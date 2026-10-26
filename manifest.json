@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "petevo.cyberghost",
+  "name": "CyberGhost for Omarchy",
+  "version": "0.1.0",
+  "author": "peteVo",
+  "license": "MIT",
+  "description": "CyberGhost official-CLI location controls and explicit NetworkManager fallback for Omarchy 4.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "CyberGhost VPN",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
