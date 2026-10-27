@@ -655,7 +655,7 @@ class TrafficProtectionTests(unittest.TestCase):
         self.assertIn("before protection was confirmed", result["error"])
 
     def test_release_needs_only_trusted_adapter_when_vendor_is_missing(self):
-        with patch.object(b, "traffic_protection", return_value=self.protection()), \
+        with patch.object(b, "traffic_protection", return_value=self.protection(uid=1000)), \
              patch.object(b.os, "getuid", return_value=1000), \
              patch.object(b, "vendor_binary", side_effect=b.BridgeError("missing vendor")) as vendor, \
              patch.object(b, "privileged_command", return_value=["/usr/bin/pkexec", "/adapter"]), \
