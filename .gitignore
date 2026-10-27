@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.ovpn
+*.conf
+*.ini
+*.key
+*.crt
+.env
+# Private provider artifacts and local diagnostics
+build/
+*.zip
+*.pkg.tar.*
+.impeccable/review/
+packaging/**/src/
+packaging/**/pkg/
