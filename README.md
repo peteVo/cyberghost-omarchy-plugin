@@ -1,57 +1,36 @@
 # CyberGhost for Omarchy 4
 
-A native Omarchy bar widget and VPN panel with an experimental official-CLI integration. Its manual-profile backend can control an existing NetworkManager **OpenVPN** profile. The target ThinkPad uses the official CLI; its older **`cyberghost`** profile (previously `openvpn`) was revoked on the provider website and is preserved, but cannot serve as a working fallback. A reviewed local CyberGhost CLI package supplies dynamic country, city and individual-server selection.
+A native Omarchy bar widget and VPN panel with an experimental official-CLI integration. A reviewed local CyberGhost CLI package supplies dynamic country, city and individual-server selection. An optional backend controls an existing NetworkManager **OpenVPN** profile.
 
 **Germany/Frankfurt → Netherlands/Amsterdam WireGuard switching was verified through the native GUI**, including country/city/server selection, different tunnel-bound public IPv4 addresses, independent DE/NL country checks, DNS setup and disconnect. The optional WireGuard kill switch was exercised on the same host: it blocked direct Wi-Fi IPv4, retained the block after a forced WireGuard link-down, recovered on link-up, and released on intentional disconnect. IPv6 route recovery remains unresolved. These bounded checks do not establish general leak protection or a protection guarantee during connection startup. The panel distinguishes configured protection from its explicit verification check and never treats a connection label as proof of tunnel integrity.
 
-## Install the development branch
+## Installation
 
-Implementation is on [feat/official-cli-bridge](https://github.com/peteVo/cyberghost-omarchy-plugin/tree/feat/official-cli-bridge), tracked in [draft PR #1](https://github.com/peteVo/cyberghost-omarchy-plugin/pull/1). The default branch does not yet contain the plugin. From a normal Omarchy terminal, after reviewing the source:
+**Experimental beta 0.4.** Tested on one Omarchy 4 ThinkPad with CyberGhost WireGuard. External public IPv6 recovery/leak validation remains incomplete; see [SECURITY.md](SECURITY.md). This is an unofficial integration, and Arch/Omarchy is not a CyberGhost-supported platform.
 
-```bash
-# Stop if this directory already exists; inspect it instead of overwriting it.
-git clone --branch feat/official-cli-bridge \
-  https://github.com/peteVo/cyberghost-omarchy-plugin.git \
-  ~/.config/omarchy/plugins/petevo.cyberghost
-omarchy plugin validate ~/.config/omarchy/plugins/petevo.cyberghost
-omarchy-shell shell rescanPlugins
-omarchy plugin enable petevo.cyberghost
-```
-
-Click **CG** in the bar. The panel shows reported connection state, connection details, optional public IPv4 lookup, backend/profile selection, protocol and server choices, saved favorites, location switching, and read-only diagnostics. Tab navigates native controls; Escape closes the panel. Preferences and favorites persist through Omarchy's existing bar-widget state API. The initial choices are **Official CLI** and **WireGuard**; the manual-profile backend remains available when a valid OpenVPN profile exists. No second Quickshell process is started.
-
-Requirements: Omarchy 4 / Quickshell, Python 3 and NetworkManager. Official-CLI mode additionally needs the reviewed client package and local account setup. The optional fallback needs NetworkManager's OpenVPN plugin and a valid configured OpenVPN profile. Authentication and secrets remain with NetworkManager's secret agent or the official CyberGhost client. The plugin never imports, edits or deletes VPN profiles.
-
-For a valid fallback on another setup, select its existing profile name in Settings and choose **Use profile**. An absent, ambiguous or non-OpenVPN profile disables connection controls. Bar choices are saved by the shell's native API; there is no need to edit `shell.json` by hand.
-
-Develop in the real user-owned plugin checkout. Saved files trigger a plugin reload, but this installed shell retained old QML in its component cache; use `omarchy restart shell` when edits are not reflected, only while the session is unlocked. The installed API rejects symlinks inside plugins and has no verified checkout-link workflow. Never edit `/usr/share/omarchy` or run another Quickshell instance.
-
-After this work is merged by the maintainer, install and update through Omarchy's native commands:
+Install the panel through Omarchy's native plugin manager:
 
 ```bash
 omarchy plugin add https://github.com/peteVo/cyberghost-omarchy-plugin.git --enable
+```
+
+This installs the panel, not the CyberGhost CLI. Dynamic locations require the **reviewed compatibility package below**, an existing CyberGhost subscription and official local account setup. The unmodified AUR package does not supply this plugin's reviewed privileged adapter. Do not use it as a substitute for that package.
+
+Click **CG** in the bar. The panel provides searchable countries/cities/servers, automatic server selection, favorites, connection details, optional public IPv4 lookup, switching, diagnostics and an optional WireGuard kill switch. Tab navigates native controls; Escape closes. Preferences and favorites persist through Omarchy's bar-widget state API. New entries default to **Official CLI / WireGuard**. No second Quickshell process is started.
+
+Requirements: Omarchy 4 / Quickshell, Python 3 and NetworkManager. Official-CLI mode also needs the reviewed package and local account setup. The optional fallback needs NetworkManager's OpenVPN plugin and a valid configured OpenVPN profile. Authentication stays with NetworkManager's secret agent or the official client. The plugin never imports, edits or deletes VPN profiles.
+
+For a valid fallback, choose **Existing OpenVPN** in Settings, enter the existing profile name and choose **Use profile**. Missing, ambiguous or non-OpenVPN profiles disable connection controls. No manual `shell.json` editing is needed.
+
+Update a clean installation with:
+
+```bash
 omarchy plugin update petevo.cyberghost
 ```
 
-Until then, keep using the feature branch checkout above. The native `omarchy plugin add` command clones the repository's default branch and has no branch option. Its update command fetches `origin HEAD`, so it does not track this draft branch. To update this development checkout, first confirm it has no local changes, then fetch and review the feature branch before fast-forwarding:
+Inspect existing installations before adding or updating them. Preserve local changes first. The native updater fetches the repository's default branch and fast-forwards; old feature-branch installations can update once their history is contained in the default branch. If cached QML still shows old code, use `omarchy restart shell` only while unlocked.
 
-```bash
-cd ~/.config/omarchy/plugins/petevo.cyberghost
-git status --short
-git fetch origin feat/official-cli-bridge
-git diff --stat HEAD FETCH_HEAD
-git diff HEAD FETCH_HEAD
-```
-
-Proceed only when the checkout is clean and you have reviewed the diff:
-
-```bash
-git merge --ff-only FETCH_HEAD
-omarchy plugin validate .
-omarchy-shell shell rescanPlugins
-```
-
-Stop if `git status --short` shows changes; preserve or resolve them before fetching an update. If cached QML still shows old code, run `omarchy restart shell` only while the session is unlocked. Once the branch is merged to the default branch, use the native add/update commands above.
+For development, inspect or clone the repository into `~/Projects/cyberghost-omarchy-plugin`, create a feature branch from the latest default branch, and follow [AGENTS.md](AGENTS.md). Develop in the inspected user-owned plugin checkout when testing the desktop. The installed API rejects symlinks inside plugins and has no verified checkout-link workflow. Never edit `/usr/share/omarchy` or run a second Quickshell instance. Save personal diagnostics and vendor artifacts outside Git.
 
 ## Official CLI and dynamic locations
 
