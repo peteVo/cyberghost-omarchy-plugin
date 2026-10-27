@@ -10,20 +10,21 @@ Ui.BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  property var snapshot: ({ backend: "manual-profile", state: "unknown", can_connect: false, can_disconnect: false })
+  property var snapshot: ({ backend: "official-cli", state: "unknown", can_connect: false, can_disconnect: false })
   property var discovery: ({ items: [], reason: "" })
   property var cities: ({ items: [], reason: "" })
   property var servers: ({ items: [], reason: "" })
   property var favorites: arrayFrom(setting("favorites", []))
-  property string backendMode: String(setting("backend", "manual-profile"))
+  property string backendMode: String(setting("backend", "official-cli"))
   property string profileName: String(setting("profile", "cyberghost"))
   property string selectedCountry: ""
   property string selectedCity: ""
-  property string selectedProtocol: ["auto", "wireguard", "openvpn"].indexOf(String(setting("protocol", "auto"))) >= 0
-    ? String(setting("protocol", "auto")) : "auto"
+  property string selectedProtocol: ["auto", "wireguard", "openvpn"].indexOf(String(setting("protocol", "wireguard"))) >= 0
+    ? String(setting("protocol", "wireguard")) : "wireguard"
   property string selectedServer: ""
   property var favoriteToApply: null
   property string publicIp: ""
+  property string protectionCheck: ""
   property string message: ""
   property string pending: ""
   property string pendingCountry: ""
@@ -34,16 +35,20 @@ Ui.BarWidget {
   property bool awaiting: false
   property int helperExit: -1
   property bool hasVendor: false
-  readonly property bool busy: awaiting && (pending === "connect" || pending === "switch" || pending === "disconnect")
+  property bool killSwitch: setting("killSwitch", false) === true
+  readonly property bool busy: awaiting && (pending === "connect" || pending === "switch" || pending === "disconnect" || pending === "release-protection")
   readonly property bool working: awaiting
   readonly property bool dynamicMode: backendMode === "official-cli"
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
   readonly property string runner: decodeURIComponent(String(Qt.resolvedUrl("cg_bridge.py")).replace(/^file:\/\//, ""))
-  readonly property string stateText: busy ? (pending === "disconnect" ? "Disconnecting…" : pending === "switch" ? "Switching…" : "Connecting…")
+  readonly property string stateText: busy ? (pending === "release-protection" ? "Restoring networking…" : pending === "disconnect" ? "Disconnecting…" : pending === "switch" ? "Switching…" : "Connecting…")
     : snapshot.other_vpn_active === true ? "Another VPN active"
     : snapshot.state === "connected" ? "Connected"
     : snapshot.state === "disconnected" ? "Disconnected"
+    : snapshot.state === "waiting-network" ? "Waiting for network…"
+    : snapshot.state === "blocked" ? "Traffic block configured"
+    : snapshot.state === "recovery-required" ? "Recovery required"
     : snapshot.state === "connecting" ? "Connecting…"
     : snapshot.state === "disconnecting" ? "Disconnecting…"
     : message ? "Status unavailable" : "Checking connection…"
@@ -87,6 +92,7 @@ Ui.BarWidget {
   function selectBackend(value) {
     if (working || value === backendMode) return
     backendMode = value
+    persistSettings({ backend: value })
     selectedCountry = ""
     resetLocations()
     discovery = ({ items: [], reason: "" })
@@ -100,6 +106,7 @@ Ui.BarWidget {
   function selectProfile(value) {
     if (working || !value.length) return
     profileName = value
+    persistSettings({ profile: value })
     publicIp = ""
     snapshot = ({ backend: backendMode, state: "unknown", can_connect: false, can_disconnect: false })
     refresh()
@@ -132,6 +139,11 @@ Ui.BarWidget {
     selectionRevision++
     persistSettings({ protocol: value })
     invoke("countries")
+  }
+  function setKillSwitch(value) {
+    if (working || snapshot.can_disconnect) return
+    killSwitch = value === true
+    persistSettings({ killSwitch: killSwitch })
   }
   function favoriteKey(item) {
     if (!item || typeof item !== "object") return ""
@@ -188,10 +200,14 @@ Ui.BarWidget {
         args.push("--city", selectedCity)
     }
     if (task === "servers" || task === "connect" || task === "switch") args.push("--server", selectedServer)
+    if ((task === "connect" || task === "switch") && dynamicMode && killSwitch) args.push("--kill-switch")
     if (task === "countries") discovery = ({ items: [], reason: "Loading countries…" })
     if (task === "cities") cities = ({ items: [], reason: "Loading cities…" })
     if (task === "servers") servers = ({ items: [], reason: "Loading servers…" })
-    if (task === "connect" || task === "switch" || task === "disconnect") publicIp = ""
+    if (task === "connect" || task === "switch" || task === "disconnect" || task === "release-protection") {
+      publicIp = ""
+      protectionCheck = ""
+    }
     if (task !== "status") message = ""
     pending = task
     pendingCountry = selectedCountry
@@ -206,7 +222,11 @@ Ui.BarWidget {
     if (!awaiting || process.running) return
     var task = pending
     var data
-    try { data = JSON.parse(output.text) } catch (e) {
+    try {
+      data = JSON.parse(output.text)
+      if (!data || typeof data !== "object" || Array.isArray(data) || typeof data.ok !== "boolean")
+        throw new Error("Invalid response object")
+    } catch (e) {
       data = { ok: false, error: "Cannot read the VPN helper response. Refresh, then check Python and the plugin installation." }
     }
     awaiting = false
@@ -302,8 +322,16 @@ Ui.BarWidget {
         favoriteToApply = null
       } else if (selectedServer && !data.items.some(function(item) { return item.name === selectedServer })) selectedServer = ""
     } else if (task === "ip") publicIp = data.ip || ""
+    else if (task === "verify-protection") {
+      protectionCheck = data.protection_verified === true ? "Last check: rules and tunnel matched."
+        : "Last check failed. Disconnect and reconnect before relying on protection."
+      if (data.protection_verified !== true) message = protectionCheck
+    }
     else if (data.state !== undefined) {
-      if (data.state !== "connected" || snapshot.state !== "connected" || snapshot.device !== data.device || snapshot.interface_index !== data.interface_index) publicIp = ""
+      if (data.state !== "connected" || snapshot.state !== "connected" || snapshot.device !== data.device || snapshot.interface_index !== data.interface_index) {
+        publicIp = ""
+        protectionCheck = ""
+      }
       snapshot = data
       message = data.error || data.warning || ""
       if (task === "check") {
@@ -317,14 +345,19 @@ Ui.BarWidget {
   IpcHandler {
     target: "petevo.cyberghost"
     function diagnostics(): string {
+      const origin = button.mapToGlobal(0, 0)
       return JSON.stringify({ opened: root.opened,
+        icon: { x: origin.x, y: origin.y, width: button.width, height: button.height },
         focused: panelLoader.item ? panelLoader.item.panelFocused === true : false,
         focusControl: panelLoader.item ? panelLoader.item.focusControl : "",
+        focusRect: panelLoader.item ? panelLoader.item.focusRect : null,
         search: panelLoader.item ? panelLoader.item.searchPlaceholder : "",
         section: panelLoader.item ? panelLoader.item.section : "",
         working: root.working, pending: root.pending, state: root.snapshot.state,
         backend: root.backendMode, country: root.selectedCountry, city: root.selectedCity,
         protocol: root.selectedProtocol, server: root.selectedServer,
+        killSwitch: root.killSwitch, configuredKillSwitch: root.snapshot.kill_switch === true,
+        ipv6Guard: root.snapshot.ipv6_guard === true,
         favorites: root.favorites.length, hasIp: root.publicIp.length > 0, message: root.message })
     }
   }

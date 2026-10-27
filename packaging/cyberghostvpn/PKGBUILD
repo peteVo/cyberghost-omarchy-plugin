@@ -2,20 +2,21 @@
 # Never runs the vendor installer, setup, uninstaller or completion generator.
 pkgname=cyberghostvpn
 pkgver=1.5.0
-pkgrel=4
+pkgrel=5
 pkgdesc='CyberGhost CLI, packaged for systemd-resolved (unverified on Arch)'
 arch=(x86_64)
 url='https://www.cyberghostvpn.com'
 license=(custom)
-depends=(bash curl glibc zlib python openvpn wireguard-tools systemd-resolvconf)
+depends=(bash curl glibc zlib python openvpn wireguard-tools systemd-resolvconf util-linux nftables)
 makedepends=(patch)
 # The PyInstaller payload is appended to the ELF; preserve the vendor binary.
 options=('!strip' '!debug')
 _archive="cyberghostvpn-ubuntu-22.04-${pkgver}"
-source=("https://download.cyberghostvpn.com/linux/${_archive}.zip" 'resolved-only.patch' 'omarchy-bridge')
+source=("https://download.cyberghostvpn.com/linux/${_archive}.zip" 'resolved-only.patch' 'omarchy-bridge' 'org.petevo.cyberghost.policy')
 sha256sums=('c7cfd8e685f497ecc957636913bc32f8fa55b6ac0bbf19b2a4ebe64d188d03a6'
             'aec59065a5f61d8a18e0ab96a66444a5f5e1d7e5a08c2bc8d812315ac5d6becb'
-            'cbc913befd165f33f654e6af6ef83baf4d5d75da1bbcd291ef026a13671ed5f6')
+            '7320dc0ff60a715396e1f15c7eb567bd2230aa8580a50f04d9ccc6dc723cfd33'
+            '7b393bfd37f5626e6cbf34b4d427d1dd8ec70621038447521b289a3ba29529a4')
 
 prepare() {
   cd "${srcdir}/${_archive}"
@@ -27,6 +28,7 @@ package() {
   # Retain the vendor's hardcoded installation path.
   local target="${pkgdir}/usr/local/cyberghost"
   install -Dm755 "${srcdir}/omarchy-bridge" "${target}/omarchy-bridge"
+  install -Dm644 "${srcdir}/org.petevo.cyberghost.policy" "${pkgdir}/usr/share/polkit-1/actions/org.petevo.cyberghost.policy"
   install -Dm755 cyberghost/cyberghostvpn "${target}/cyberghostvpn"
   install -Dm755 cyberghost/update-systemd-resolved "${target}/update-systemd-resolved"
   install -Dm644 cyberghost/openvpn/ca.crt "${target}/openvpn/ca.crt"

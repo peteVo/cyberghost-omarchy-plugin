@@ -2,23 +2,34 @@
 """Narrow Polkit adapter for the official client; no credential handling."""
 from contextlib import contextmanager
 import fcntl
+import hashlib
+import json
 import os
+from pathlib import Path
 import pwd
 import re
 import stat
 import subprocess
 import sys
+import tempfile
 
 VENDOR = "/usr/local/cyberghost/cyberghostvpn"
+GUARD = Path("/run/cyberghost-omarchy.json")
+TABLE = "omarchy_cyberghost"
+SYSTEM_ENV = {"PATH": "/usr/bin:/bin", "LANG": "C", "LC_ALL": "C"}
 
 
 def validate(argv):
-    if argv == ["--stop"]:
+    if argv in (["--stop"], ["--release-protection"], ["--verify-protection"]):
         return
     if (len(argv) < 4 or argv[:2] != ["--traffic", "--country-code"]
             or not re.fullmatch(r"[A-Z]{2}", argv[2]) or argv[-1] != "--connect"):
         raise ValueError
     options = argv[3:-1]
+    if options[-1:] == ["--kill-switch"]:
+        options = options[:-1]
+        if options[-1:] != ["--wireguard"]:
+            raise ValueError
     city = False
     for flag, pattern in (("--city", r"[^\W\d_][\w .()'’-]{0,63}"),
                           ("--server", r"[a-z0-9][a-z0-9-]{0,63}")):
@@ -30,6 +41,199 @@ def validate(argv):
             options = options[2:]
     if options not in ([], ["--wireguard"], ["--openvpn"]):
         raise ValueError
+
+
+def command(argv):
+    return subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True,
+                          text=True, timeout=8, check=False, env=SYSTEM_ENV)
+
+
+def ipv6_namespace():
+    # Only this process and its children see the read-only sysctl mount.
+    os.unshare(os.CLONE_NEWNS)
+    for argv in (["/usr/bin/mount", "--make-rprivate", "/"],
+                 ["/usr/bin/mount", "--bind", "/proc/sys/net/ipv6/conf", "/proc/sys/net/ipv6/conf"],
+                 ["/usr/bin/mount", "-o", "remount,bind,ro", "/proc/sys/net/ipv6/conf"]):
+        if command(argv).returncode:
+            raise RuntimeError("Cannot isolate IPv6 settings")
+
+
+def guard_state():
+    try:
+        fd = os.open(GUARD, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd) as file:
+        info = os.fstat(file.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_mode & 0o022 or info.st_size > 2048):
+            raise ValueError
+        value = json.load(file)
+    if (not isinstance(value, dict) or type(value.get("uid")) is not int
+            or not 0 < value["uid"] < 2**32 - 1 or value.get("device") != "cyberghost"
+            or type(value.get("kill_switch")) is not bool
+            or type(value.get("interface_index")) is not int or value["interface_index"] < 0
+            or type(value.get("mark")) is not int or not 0 <= value["mark"] < 2**32
+            or value.get("phase") not in ("prepared", "active", "blocked")
+            or (value.get("fingerprint") is not None
+                and not re.fullmatch(r"[0-9a-f]{64}", str(value["fingerprint"])))
+            or (value["phase"] == "active" and (value["mark"] == 0 or value["interface_index"] == 0))
+            or (value["phase"] == "blocked" and not value["kill_switch"])):
+        raise ValueError
+    return value
+
+
+def write_guard(value):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir="/run", prefix=".cyberghost-", delete=False) as file:
+            temporary = Path(file.name)
+            json.dump(value, file)
+        temporary.chmod(0o644)
+        os.replace(temporary, GUARD)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def guard_exists():
+    result = command(["/usr/bin/nft", "list", "table", "inet", TABLE])
+    if result.returncode == 0:
+        return True
+    if "No such file" in result.stderr:
+        return False
+    raise RuntimeError("Cannot inspect traffic protection")
+
+
+def guard_script(mark, kill_switch, replace=False):
+    if ((mark is not None and (type(mark) is not int or not 0 < mark < 2**32))
+            or type(kill_switch) is not bool):
+        raise ValueError
+    prefix = f"delete table inet {TABLE}\n" if replace else ""
+    blocked = "meta nfproto { ipv4, ipv6 }" if kill_switch else "meta nfproto ipv6"
+    transport = f"meta mark {mark} accept" if mark is not None else ""
+    return prefix + f'''table inet {TABLE} {{
+  chain output {{
+    type filter hook output priority -10; policy accept;
+    oifname "lo" accept
+    {transport}
+    oifname "cyberghost" accept
+    meta nfproto ipv6 icmpv6 type {{ 133, 135, 136 }} ip6 hoplimit 255 accept
+    meta nfproto ipv6 icmpv6 type {{ 131, 132, 143 }} ip6 daddr ff02::/16 accept
+    meta nfproto ipv6 udp sport 546 udp dport 547 accept
+    meta nfproto ipv4 udp sport 68 udp dport 67 accept
+    {blocked} reject with icmpx type admin-prohibited
+  }}
+}}
+'''
+
+
+def guard_fingerprint():
+    result = command(["/usr/bin/nft", "--json", "list", "table", "inet", TABLE])
+    if result.returncode:
+        return None
+    if len(result.stdout) > 100_000:
+        raise ValueError
+    data = json.loads(result.stdout)
+    if not isinstance(data, dict):
+        raise ValueError
+    records = data.get("nftables")
+    if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+        raise ValueError
+    if any(len(item) != 1 or next(iter(item)) not in ("metainfo", "table", "chain", "rule")
+           or not isinstance(next(iter(item.values())), dict) for item in records):
+        raise ValueError
+    if not any(isinstance(item.get("table"), dict) and item["table"].get("name") == TABLE for item in records):
+        raise ValueError
+    rules = [item for item in records if "metainfo" not in item]
+    return hashlib.sha256(json.dumps(rules, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def install_guard(value, mark, kill_switch, phase):
+    previous = guard_state()
+    exists = guard_exists()
+    if (exists and previous is None) or (previous and previous["uid"] != value["uid"]):
+        raise ValueError
+    script = guard_script(mark, kill_switch, exists)
+    value = {**value, "phase": "prepared", "kill_switch": False}
+    write_guard(value)
+    result = subprocess.run(["/usr/bin/nft", "--file", "-"], input=script, capture_output=True,
+                            text=True, timeout=8, check=False, env=SYSTEM_ENV)
+    if result.returncode:
+        raise RuntimeError("Cannot configure traffic protection")
+    value["phase"] = phase
+    value["kill_switch"] = kill_switch
+    value["fingerprint"] = guard_fingerprint()
+    if value["fingerprint"] is None:
+        raise RuntimeError("Cannot verify installed traffic protection")
+    write_guard(value)
+
+
+def prepare_guard(uid, blocked=False):
+    value = {"uid": uid, "device": "cyberghost", "interface_index": 0,
+             "mark": 0, "kill_switch": blocked}
+    install_guard(value, None, blocked, "blocked" if blocked else "prepared")
+
+
+def wireguard_details():
+    link = command(["/usr/bin/ip", "-j", "-d", "link", "show", "dev", "cyberghost"])
+    links = json.loads(link.stdout) if link.returncode == 0 else []
+    if (not isinstance(links, list) or len(links) != 1 or not isinstance(links[0], dict)
+            or not isinstance(links[0].get("linkinfo"), dict)
+            or links[0]["linkinfo"].get("info_kind") != "wireguard"
+            or type(links[0].get("ifindex")) is not int or links[0]["ifindex"] <= 0):
+        raise ValueError
+    mark = command(["/usr/bin/wg", "show", "cyberghost", "fwmark"])
+    if mark.returncode or not re.fullmatch(r"0x[0-9a-fA-F]{1,8}\s*", mark.stdout):
+        raise ValueError
+    numeric_mark = int(mark.stdout.strip(), 16)
+    if numeric_mark == 0:
+        raise ValueError
+    return links[0]["ifindex"], numeric_mark
+
+
+def apply_guard(uid, kill_switch):
+    index, mark = wireguard_details()
+    value = {"uid": uid, "device": "cyberghost", "interface_index": index,
+             "mark": mark, "kill_switch": kill_switch, "phase": "prepared"}
+    install_guard(value, value["mark"], kill_switch, "active")
+
+
+def remove_guard(uid):
+    value = guard_state()
+    exists = guard_exists()
+    if (exists and value is None) or (value and value["uid"] != uid):
+        raise ValueError
+    if exists and command(["/usr/bin/nft", "delete", "table", "inet", TABLE]).returncode:
+        raise RuntimeError("Cannot release traffic protection")
+    GUARD.unlink(missing_ok=True)
+
+
+def vendor(argv, environment):
+    return subprocess.run([VENDOR, *argv], env=environment, stdin=subprocess.DEVNULL,
+                          close_fds=True, timeout=45 if argv == ["--stop"] else 120, check=False).returncode
+
+
+def tunnel_absent():
+    result = command(["/usr/bin/ip", "-j", "link", "show"])
+    if result.returncode:
+        raise RuntimeError("Cannot confirm tunnel teardown")
+    links = json.loads(result.stdout)
+    if (not isinstance(links, list) or any(not isinstance(item, dict)
+            or not isinstance(item.get("ifname"), str) for item in links)):
+        raise ValueError
+    return not any(item["ifname"] == "cyberghost" for item in links)
+
+
+def rollback(uid, kill_switch, environment):
+    try:
+        vendor(["--stop"], environment)
+        if not kill_switch and tunnel_absent():
+            remove_guard(uid)
+    except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired):
+        pass
+    if kill_switch:
+        prepare_guard(uid, blocked=True)
 
 
 @contextmanager
@@ -56,9 +260,51 @@ def main(argv):
                    "LOGNAME": account.pw_name, "SUDO_USER": account.pw_name}
     try:
         with root_lock():
-            result = subprocess.run([VENDOR, *argv], env=environment, stdin=subprocess.DEVNULL,
-                                    close_fds=True, timeout=45 if argv == ["--stop"] else 120, check=False)
-            return result.returncode
+            uid = int(raw_uid)
+            protection = guard_state()
+            if protection and protection["uid"] != uid:
+                raise ValueError
+            if argv == ["--release-protection"]:
+                remove_guard(uid)
+                return 0
+            if argv == ["--verify-protection"]:
+                verified = bool(protection and protection.get("fingerprint")
+                                and guard_fingerprint() == protection["fingerprint"])
+                if verified and protection["phase"] == "active":
+                    verified = wireguard_details() == (protection["interface_index"], protection["mark"])
+                elif verified:
+                    verified = protection["phase"] == "blocked" and tunnel_absent()
+                print(json.dumps({"protection_verified": verified}))
+                return 0
+            wireguard = "--wireguard" in argv
+            if wireguard or protection:
+                ipv6_namespace()
+            if argv == ["--stop"]:
+                result = vendor(argv, environment)
+                if protection:
+                    if not tunnel_absent():
+                        raise RuntimeError("Tunnel did not stop; protection retained")
+                    remove_guard(uid)
+                return result
+            if protection:
+                print("Disconnect the protected session before starting another connection.", file=sys.stderr)
+                return 75
+            kill_switch = "--kill-switch" in argv
+            vendor_args = [arg for arg in argv if arg != "--kill-switch"]
+            if wireguard:
+                prepare_guard(uid)
+            try:
+                result = vendor(vendor_args, environment)
+                if result == 0 and wireguard:
+                    apply_guard(uid, kill_switch)
+                elif result and wireguard:
+                    rollback(uid, kill_switch, environment)
+                return result
+            except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired):
+                # Keep the root lock while attempting rollback of a partial start.
+                if wireguard:
+                    rollback(uid, kill_switch, environment)
+                raise
     except BlockingIOError:
         print("Another CyberGhost operation is active.", file=sys.stderr)
         return 75
@@ -68,8 +314,11 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--version"]:
+        print("omarchy-bridge 2")
+        sys.exit(0)
     try:
         sys.exit(main(sys.argv[1:]))
-    except (ValueError, KeyError, OSError):
+    except (ValueError, KeyError, OSError, RuntimeError):
         print("CyberGhost authorization adapter refused the request.", file=sys.stderr)
         sys.exit(1)

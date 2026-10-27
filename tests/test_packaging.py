@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 
 PACKAGE = os.environ.get("CG_TEST_PACKAGE")
@@ -91,6 +92,37 @@ class PackageTests(unittest.TestCase):
                                   check=True, capture_output=True).stdout
         source = Path(__file__).parents[1] / "packaging/cyberghostvpn/omarchy-bridge"
         self.assertEqual(hashlib.sha256(packaged).digest(), hashlib.sha256(source.read_bytes()).digest())
+
+    def test_polkit_policy_is_root_owned_auth_only_and_targets_the_helper(self):
+        member = "usr/share/polkit-1/actions/org.petevo.cyberghost.policy"
+        members = {name.removeprefix("./") for name in self.members}
+        self.assertIn(member, members)
+
+        listing = subprocess.run(["bsdtar", "-tvf", str(self.package)], check=True,
+                                 capture_output=True, text=True).stdout
+        entry = next(line for line in listing.splitlines() if line.endswith(member))
+        self.assertRegex(entry, r"^-rw-r--r--\s+\d+\s+root\s+root\s+\d+\s")
+
+        packaged = subprocess.run(["bsdtar", "-xOf", str(self.package), member],
+                                  check=True, capture_output=True).stdout
+        source = Path(__file__).parents[1] / "packaging/cyberghostvpn/org.petevo.cyberghost.policy"
+        self.assertEqual(packaged, source.read_bytes())
+        text = packaged.decode("utf-8")
+        policy = ET.fromstring(text)
+        actions = policy.findall("action")
+        self.assertEqual(len(actions), 1)
+        action = actions[0]
+        self.assertEqual(action.get("id"), "org.petevo.cyberghost.manage")
+        defaults = action.find("defaults")
+        self.assertIsNotNone(defaults)
+        self.assertEqual(defaults.findtext("allow_any"), "auth_admin")
+        self.assertEqual(defaults.findtext("allow_inactive"), "auth_admin")
+        self.assertEqual(defaults.findtext("allow_active"), "auth_admin_keep")
+        annotate = action.find("annotate[@key='org.freedesktop.policykit.exec.path']")
+        self.assertIsNotNone(annotate)
+        self.assertEqual(annotate.text, "/usr/local/cyberghost/omarchy-bridge")
+        self.assertNotRegex(text, r"<allow_(?:any|inactive|active)>\s*yes\s*</")
+        self.assertFalse(any("polkit-1/rules.d/" in name for name in members))
 
     def test_active_resolved_up_sets_dns_then_default_domain(self):
         result = self.run_hook("up")

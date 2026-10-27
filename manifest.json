@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "petevo.cyberghost",
   "name": "CyberGhost for Omarchy",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": "peteVo",
   "license": "MIT",
-  "description": "Native OpenVPN profile controls and experimental CyberGhost CLI locations for Omarchy 4.",
+  "description": "Native CyberGhost CLI locations, WireGuard controls and an existing OpenVPN fallback for Omarchy 4.",
   "kinds": [
     "bar-widget"
   ],

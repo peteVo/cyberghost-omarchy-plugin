@@ -12,14 +12,20 @@ Ui.Panel {
   property var hostWidget: null
   property var vpn: null
   readonly property bool panelFocused: content.Window.window ? content.Window.window.active : false
-  readonly property string focusControl: {
-    if (!panelFocused || !content.Window.window) return ""
+  readonly property var focusedControlItem: {
+    if (!panelFocused || !content.Window.window) return null
     var item = content.Window.window.activeFocusItem
     while (item) {
-      if (item.objectName && String(item.objectName).indexOf("vpn") === 0) return String(item.objectName)
+      if (item.objectName && String(item.objectName).indexOf("vpn") === 0) return item
       item = item.parent
     }
-    return ""
+    return null
+  }
+  readonly property string focusControl: focusedControlItem ? String(focusedControlItem.objectName) : ""
+  readonly property var focusRect: {
+    if (!focusedControlItem) return null
+    var point = focusedControlItem.mapToGlobal(0, 0)
+    return { x: point.x, y: point.y, width: focusedControlItem.width, height: focusedControlItem.height }
   }
   readonly property string searchPlaceholder: {
     if (!panelFocused || !content.Window.window) return ""
@@ -32,10 +38,12 @@ Ui.Panel {
   readonly property bool canDisconnect: vpn && vpn.snapshot.can_disconnect === true
   readonly property bool dynamicReady: vpn && vpn.dynamicMode
   readonly property bool canSwitch: dynamicReady && canDisconnect && targetReady()
+  onOpenedChanged: if (opened && vpn && !vpn.working) vpn.refresh()
 
   function targetReady() {
     if (!vpn || !dynamicReady || vpn.protocolRefresh || !vpn.selectedCountry
         || !vpn.discovery.items.some(function(item) { return item.code === vpn.selectedCountry })) return false
+    if (vpn.killSwitch && vpn.selectedProtocol !== "wireguard") return false
     if (vpn.selectedCity && vpn.cities.items.indexOf(vpn.selectedCity) < 0) return false
     return !vpn.selectedServer || vpn.servers.items.some(function(item) { return item.name === vpn.selectedServer })
   }
@@ -78,7 +86,6 @@ Ui.Panel {
 
   function open() {
     root.controller.show()
-    if (vpn && !vpn.working) vpn.refresh()
   }
   function close() {
     countryPicker.close()
@@ -198,13 +205,24 @@ Ui.Panel {
           }
           Label {
             visible: root.dynamicReady
-            text: "Client may disable IPv6. No kill switch."
+            text: root.vpn && root.vpn.snapshot.kill_switch === true ? "Kill switch configured · Verify in Settings"
+              : root.vpn && root.vpn.snapshot.ipv6_guard === true ? "IPv6 guard configured · No kill switch"
+              : root.vpn && (root.vpn.snapshot.protocol === "OpenVPN" || (!root.connected && root.vpn.selectedProtocol !== "wireguard")) ? "OpenVPN protection is unverified. Prefer WireGuard."
+              : root.connected ? "Protection is not recorded. Check the client setup."
+              : "Protection starts after connection. Check Settings."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label {
+            visible: root.vpn && root.vpn.pending === "switch" && root.vpn.snapshot.kill_switch === true
+            text: "Switching temporarily releases the traffic block."
             font.pixelSize: Style.font.bodySmall
           }
           Action {
             objectName: "vpnConnectAction"
             width: parent.width
-            text: root.vpn && root.vpn.busy ? root.vpn.stateText : root.canDisconnect ? "Disconnect VPN"
+            text: root.vpn && root.vpn.busy ? root.vpn.stateText
+              : root.vpn && (root.vpn.snapshot.state === "blocked" || root.vpn.snapshot.state === "recovery-required") ? "Restore normal networking"
+              : root.canDisconnect ? "Disconnect VPN"
               : root.dynamicReady ? "Connect selected location" : "Connect VPN"
             enabled: root.vpn && !root.vpn.working && (root.canDisconnect ? true
               : root.vpn.snapshot.can_connect === true && (!root.dynamicReady || root.targetReady()))
@@ -338,7 +356,7 @@ Ui.Panel {
             visible: root.section === "locations" && !root.dynamicReady
             width: parent.width
             spacing: Style.spacing.controlGap
-            Label { text: "Using existing OpenVPN profile “" + (root.vpn ? root.vpn.profileName : "cyberghost") + "”. Its imported configuration selects the location." }
+            Label { text: "Uses a saved OpenVPN profile. Choose a valid profile in Settings; its configuration determines the location." }
           }
 
           Column {
@@ -347,7 +365,8 @@ Ui.Panel {
             spacing: Style.spacing.controlGap
             Ui.PanelSeparator { foreground: root.ink }
             Ui.PanelSectionHeader { text: "Connection details"; foreground: root.ink }
-            Label { text: "Profile   " + (root.vpn ? root.vpn.profileName : "—") }
+            Label { text: "Backend   " + (root.dynamicReady ? "Official CLI" : "NetworkManager") }
+            Label { visible: !root.dynamicReady; text: "Profile   " + (root.vpn ? root.vpn.profileName : "—") }
             Label { text: "Protocol  " + (root.vpn && root.vpn.snapshot.protocol ? root.vpn.snapshot.protocol : "Not reported") }
             Label { text: (root.vpn && root.vpn.snapshot.location_source === "requested" ? "Requested location  "
               : root.vpn && root.vpn.snapshot.location ? "Reported location  " : "Location  ")
@@ -386,10 +405,8 @@ Ui.Panel {
               objectName: "vpnBackendPicker"
             width: parent.width
             label: "Connection backend"
-            value: root.vpn ? root.vpn.backendMode : "manual-profile"
-            options: root.vpn && root.vpn.hasVendor
-              ? [{ value: "manual-profile", label: "Existing OpenVPN" }, { value: "official-cli", label: "Official CLI · experimental" }]
-              : [{ value: "manual-profile", label: "Existing OpenVPN" }]
+            value: root.vpn ? root.vpn.backendMode : "official-cli"
+            options: [{ value: "manual-profile", label: "Existing OpenVPN" }, { value: "official-cli", label: "Official CLI · experimental" }]
             foreground: root.ink
             enabled: root.vpn && !root.vpn.working && (root.vpn.snapshot.state === "disconnected" || root.vpn.snapshot.state === "unknown")
             onChanged: function(value) { root.vpn.selectBackend(value) }
@@ -423,11 +440,58 @@ Ui.Panel {
               : "Official CLI not detected in a trusted system path. Arch/Omarchy is not a vendor-supported platform."
             font.pixelSize: Style.font.bodySmall
           }
+          Ui.Toggle {
+            objectName: "vpnKillSwitchToggle"
+            visible: root.dynamicReady
+            width: parent.width
+            label: "Kill switch · WireGuard"
+            checked: root.vpn && root.vpn.killSwitch
+            enabled: root.vpn && !root.vpn.working && !root.canDisconnect
+              && (root.vpn.selectedProtocol === "wireguard" || checked)
+            opacity: enabled ? 1 : 0.5
+            foreground: root.ink
+            Accessible.role: Accessible.CheckBox
+            Accessible.name: label
+            Accessible.checkable: true
+            Accessible.checked: checked
+            onClicked: root.vpn.setKillSwitch(!checked)
+          }
           Label {
-            text: "No kill switch. DNS and IPv6 leak protection are untested. Automatic connection and reconnection are unavailable."
+            visible: root.dynamicReady
+            text: "Starts after connection. Unexpected tunnel loss retains the block. Disconnects and location switches release it."
             font.pixelSize: Style.font.bodySmall
           }
-          Label { text: "Protocol and favorites are saved in shell settings. Backend and profile choices last for this session."; font.pixelSize: Style.font.bodySmall }
+          Label {
+            visible: root.dynamicReady && root.vpn && root.vpn.killSwitch && root.vpn.selectedProtocol !== "wireguard"
+            text: "Choose WireGuard or turn off the kill switch before connecting."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Action {
+            objectName: "vpnVerifyProtection"
+            visible: root.vpn && root.vpn.snapshot.can_release_protection === true
+            text: "Verify traffic protection"
+            enabled: root.vpn && !root.vpn.working
+            onClicked: root.vpn.invoke("verify-protection")
+          }
+          Label {
+            visible: root.vpn && root.vpn.protectionCheck.length > 0
+            text: root.vpn ? root.vpn.protectionCheck : ""
+            font.pixelSize: Style.font.bodySmall
+          }
+          Action {
+            objectName: "vpnReleaseProtection"
+            visible: root.vpn && root.vpn.snapshot.can_release_protection === true
+              && root.vpn.snapshot.state !== "connected" && root.vpn.snapshot.state !== "waiting-network"
+            text: "Release CyberGhost traffic block"
+            enabled: root.vpn && !root.vpn.working
+            onClicked: root.vpn.invoke("release-protection")
+          }
+          Label {
+            visible: root.vpn && root.vpn.snapshot.can_release_protection === true
+            text: "Releasing the block allows normal networking without disconnecting other VPNs."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label { text: "Automatic server reconnection is unavailable. Preferences and favorites are saved locally."; font.pixelSize: Style.font.bodySmall }
         }
       }
     }
