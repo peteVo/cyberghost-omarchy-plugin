@@ -1,133 +1,212 @@
 # CyberGhost for Omarchy 4
 
-A native Omarchy bar widget and VPN panel with an experimental official-CLI integration. A reviewed local CyberGhost CLI package supplies dynamic country, city and individual-server selection. An optional backend controls an existing NetworkManager **OpenVPN** profile.
+A native Omarchy bar widget and VPN panel with an experimental official-client
+backend for dynamic CyberGhost locations. An optional fallback controls an
+existing NetworkManager OpenVPN profile. The plugin does not import, edit or
+delete VPN profiles.
 
-**Germany/Frankfurt → Netherlands/Amsterdam WireGuard switching was verified through the native GUI**, including country/city/server selection, different tunnel-bound public IPv4 addresses, independent DE/NL country checks, DNS setup and disconnect. The optional WireGuard kill switch was exercised on the same host: it blocked direct Wi-Fi IPv4, retained the block after a forced WireGuard link-down, recovered on link-up, and released on intentional disconnect. IPv6 route recovery remains unresolved. These bounded checks do not establish general leak protection or a protection guarantee during connection startup. The panel distinguishes configured protection from its explicit verification check and never treats a connection label as proof of tunnel integrity.
+## Beta 0.5 installation
 
-## Installation
-
-**Experimental beta 0.4.** Tested on one Omarchy 4 ThinkPad with CyberGhost WireGuard. External public IPv6 recovery/leak validation remains incomplete; see [SECURITY.md](SECURITY.md). This is an unofficial integration, and Arch/Omarchy is not a CyberGhost-supported platform.
-
-Install the panel through Omarchy's native plugin manager:
+Beta 0.5 is in [PR #2](https://github.com/peteVo/cyberghost-omarchy-plugin/pull/2) and is not merged. The default branch and normal plugin
+installation still provide beta 0.4. To review the beta safely, install it
+disabled, verify the exact PR head commit, then validate and enable it. If the
+plugin is already installed, inspect and preserve its changes instead of
+replacing the checkout:
 
 ```bash
-omarchy plugin add https://github.com/peteVo/cyberghost-omarchy-plugin.git --enable
+omarchy plugin add https://github.com/peteVo/cyberghost-omarchy-plugin.git
+cd ~/.config/omarchy/plugins/petevo.cyberghost
+git status --short                 # stop unless the checkout is clean
+git remote -v                      # verify origin is the expected repository
+git fetch origin feat/privacy-recovery-0.5
+git rev-parse FETCH_HEAD           # compare with the reviewed PR #2 head SHA
+git show --stat --format=fuller FETCH_HEAD
 ```
 
-This installs the panel, not the CyberGhost CLI. Dynamic locations require the **reviewed compatibility package below**, an existing CyberGhost subscription and official local account setup. The unmodified AUR package does not supply this plugin's reviewed privileged adapter. Do not use it as a substitute for that package.
-
-Click **CG** in the bar. The panel provides searchable countries/cities/servers, automatic server selection, favorites, connection details, optional public IPv4 lookup, switching, diagnostics and an optional WireGuard kill switch. Tab navigates native controls; Escape closes. Preferences and favorites persist through Omarchy's bar-widget state API. New entries default to **Official CLI / WireGuard**. No second Quickshell process is started.
-
-Requirements: Omarchy 4 / Quickshell, Python 3 and NetworkManager. Official-CLI mode also needs the reviewed package and local account setup. The optional fallback needs NetworkManager's OpenVPN plugin and a valid configured OpenVPN profile. Authentication stays with NetworkManager's secret agent or the official client. The plugin never imports, edits or deletes VPN profiles.
-
-For a valid fallback, choose **Existing OpenVPN** in Settings, enter the existing profile name and choose **Use profile**. Missing, ambiguous or non-OpenVPN profiles disable connection controls. No manual `shell.json` editing is needed.
-
-Update a clean installation with:
+`omarchy plugin add` prompts whether to enable: answer **No**. Do not pass
+`--enable` or `--yes` before reviewing the PR code. Compare `FETCH_HEAD` with
+the current PR #2 head SHA and inspect the commit diff on GitHub. Stop if the
+SHA does not match. Only after review, switch to the commit, validate and enable:
 
 ```bash
-omarchy plugin update petevo.cyberghost
+git switch --detach FETCH_HEAD
+omarchy plugin validate .
+omarchy plugin enable petevo.cyberghost
 ```
 
-Inspect existing installations before adding or updating them. Preserve local changes first. The native updater fetches the repository's default branch and fast-forwards; old feature-branch installations can update once their history is contained in the default branch. If cached QML still shows old code, use `omarchy restart shell` only while unlocked.
+See [TESTING.md](TESTING.md) for the future Omarchy 4 VM checklist. No fresh
+second-PC VM test has been completed. During this pre-merge beta, keep the
+reviewed commit pinned; the native plugin updater follows the default branch.
 
-For development, inspect or clone the repository into `~/Projects/cyberghost-omarchy-plugin`, create a feature branch from the latest default branch, and follow [AGENTS.md](AGENTS.md). Develop in the inspected user-owned plugin checkout when testing the desktop. The installed API rejects symlinks inside plugins and has no verified checkout-link workflow. Never edit `/usr/share/omarchy` or run a second Quickshell instance. Save personal diagnostics and vendor artifacts outside Git.
+The widget uses Omarchy's native shell APIs and existing Quickshell process.
+New entries default to **Official CLI / WireGuard**. The panel provides
+country/city/server selection, favorites, switching, connection details and an
+explicit public IPv4 lookup. That lookup is third-party and IPv4-only; it binds
+curl to the detected tunnel interface, disables `.curlrc`, and has no
+default-route fallback. Displayed connection/location data is not proof of
+provider identity or tunnel integrity.
 
-## Official CLI and dynamic locations
-
-Arch/Omarchy is not a vendor-supported platform. The reviewed Ubuntu 22.04 archive is CyberGhost **1.5.0**, SHA-256 `c7cfd8e685f497ecc957636913bc32f8fa55b6ac0bbf19b2a4ebe64d188d03a6`. Its bundled README documents these commands:
+Requirements: Omarchy 4 / Quickshell, Python 3.12 or newer, and NetworkManager.
+Official CLI mode also needs package 1.5.0-7 or newer (helper API 4),
+`iproute2`, `polkit`, `nftables`, `wireguard-tools`, `systemd-resolvconf`, and
+official local account setup. Run the read-only check before connecting or
+switching; failed prerequisites disable those GUI controls:
 
 ```bash
-cyberghostvpn --help
-cyberghostvpn --traffic --country-code
-cyberghostvpn --traffic --country-code DE
-cyberghostvpn --traffic --country-code DE --city Frankfurt
+python3 cg_bridge.py check --backend official-cli
+/usr/local/cyberghost/omarchy-bridge --version
 ```
 
-The first list supplies countries, the second cities, and the third servers. `--connect` selects a live provider location; the CLI obtains the connection configuration using its authenticated account. You do not manually download one OpenVPN file per country. Server and protocol flags are validated against the installed client. WireGuard was exercised with automatic server selection in Frankfurt and an explicitly selected Amsterdam server.
+The fallback needs NetworkManager's OpenVPN plugin and one explicitly selected
+valid OpenVPN profile. The old `cyberghost` profile was revoked provider-side;
+preserve it, but do not treat it as usable or attempt to revive it.
 
-The adapter discovers countries, cities and servers from the installed client and validates each selection before connecting. The panel now exposes protocol/server choices, favorites and a switch action; switching stops the current session only after the target discovery checks succeed and disconnect is confirmed. A server returned by the client was selected for one NL WireGuard connection. Location and duration shown in the panel are recorded as requested/session metadata; they are not independently verified endpoint identity. Automatic reconnect is not implemented. The GUI switch path was exercised from Frankfurt to Amsterdam, after an Amsterdam-to-Frankfurt switch.
-
-For a fresh official-CLI setup, complete these steps in order:
-
-1. Build and review the local package below, then install the package and its dependencies from your own terminal. Stop if the transaction proposes removals or unexpected core upgrades.
-2. Complete account/device setup through the official client in your own terminal: `sudo cyberghostvpn --setup`. Enter credentials only in that client flow.
-3. Open **CG** and choose **Settings → Official CLI** and **Locations → WireGuard**. These settings persist through Omarchy's existing bar-widget API. The NetworkManager profile backend remains available for a valid OpenVPN profile.
-
-Installing the CLI alone does not change the selected backend. To set the same choices directly with Omarchy's native bar-widget API:
+The official client enumerates available locations; the plugin validates each
+selection and asks the authenticated client to fetch connection configuration
+when connecting. No per-location profile imports are needed. These catalog
+commands are read-only:
 
 ```bash
-omarchy-shell shell setBarWidget petevo.cyberghost backend '"official-cli"' '{}'
-omarchy-shell shell setBarWidget petevo.cyberghost protocol '"wireguard"' '{}'
+python3 cg_bridge.py countries --backend official-cli
+python3 cg_bridge.py cities --backend official-cli --country DE
+python3 cg_bridge.py servers --backend official-cli --country DE --city Frankfurt
 ```
 
-The reviewed package's root-owned adapter maps the authenticated Polkit UID through NSS, uses a minimal environment, and accepts a narrow connect/stop/protection command set. Its packaged Polkit action is bound to the fixed adapter path and requests administrator authentication; active-session authorization may be cached by Polkit. A root lock serializes operations while the adapter remains alive; a vendor descendant may survive helper death or timeout, so refresh status before retrying. The adapter handles no passwords and adds no daemon or local authorization override.
+## Reviewed CLI package
 
-### Reviewed local package
+The local Arch recipe packages the checksum-pinned CyberGhost 1.5.0 Ubuntu
+22.04 client. Current recipe version is **1.5.0-7**. Its dependencies include
+Python 3.12+, `iproute2` and `polkit`, in addition to the VPN, resolver and
+system utilities in [PKGBUILD](packaging/cyberghostvpn/PKGBUILD). It keeps the
+vendor executable unchanged, avoids vendor install/uninstall scripts, and
+installs the fixed root-owned API 4 adapter and its bound Polkit action.
 
-See [SECURITY.md](SECURITY.md) and [packaging/cyberghostvpn/PKGBUILD](packaging/cyberghostvpn/PKGBUILD). Version **1.5.0-5**:
-
-- Packages the original x86-64 binary unchanged; never runs the vendor installer, uninstaller or completion generator.
-- Omits the unused HTTP certificate download and installs the bundled private key as root-owned `0600`.
-- Uses `systemd-resolvconf`, the packaged compatibility layer for resolved; does not replace resolver services.
-- Patches the OpenVPN resolver hook to refuse global `resolv.conf` rewriting and report DNS setup failures. This is not a tested leak-prevention guarantee.
-- Adds the narrowly scoped, root-owned Polkit adapter and its fixed-path administrator-auth action.
-
-Build without installing runtime dependencies, in a scratch directory outside the plugin. Place the reviewed vendor ZIP there first:
+Build in a private scratch directory outside the checkout. `PKGBUILD` fetches
+the official [vendor archive](https://download.cyberghostvpn.com/linux/cyberghostvpn-ubuntu-22.04-1.5.0.zip)
+and verifies SHA-256 `c7cfd8e685f497ecc957636913bc32f8fa55b6ac0bbf19b2a4ebe64d188d03a6`.
+The build contains a vendor-distributed key; never commit the archive, key,
+package, account material or private diagnostics. Inspect the package inventory
+before installing. Do not use the separately packaged `cyberghostvpn-gui`, run
+`pacman -Sy`, or accept unexpected package removals/upgrades.
 
 ```bash
+sudo pacman -S --needed base-devel
 CG_BUILD_DIR=$(mktemp -d)
 cp packaging/cyberghostvpn/PKGBUILD packaging/cyberghostvpn/resolved-only.patch \
   packaging/cyberghostvpn/omarchy-bridge packaging/cyberghostvpn/org.petevo.cyberghost.policy \
   "$CG_BUILD_DIR/"
-cp ~/Downloads/aur-review/cyberghostvpn/cyberghostvpn-ubuntu-22.04-1.5.0.zip "$CG_BUILD_DIR/"
 (cd "$CG_BUILD_DIR" && makepkg --nodeps)
-bsdtar -tvf "$CG_BUILD_DIR/cyberghostvpn-1.5.0-5-x86_64.pkg.tar.zst"
+bsdtar -tvf "$CG_BUILD_DIR/cyberghostvpn-1.5.0-7-x86_64.pkg.tar.zst"
 ```
 
-`--nodeps` permits packaging without installing runtime packages; it is not a runtime compatibility check. Build artifacts contain the vendor-distributed key and must remain private and outside Git. Do not use the separately packaged `cyberghostvpn-gui`.
-
-After reviewing the package inventory, install its dependencies and the local artifact in your own terminal. Stop on proposed removals or unexpected core upgrades:
+`--nodeps` skips dependency checks; it does not establish runtime compatibility.
+`base-devel` supplies the Arch build tools and `patch`. After reviewing the
+package and proposed transaction, install
+its dependencies and the artifact from your own terminal:
 
 ```bash
-sudo pacman -S --needed openvpn wireguard-tools systemd-resolvconf util-linux nftables
-sudo pacman -U "$CG_BUILD_DIR/cyberghostvpn-1.5.0-5-x86_64.pkg.tar.zst"
+sudo pacman -S --needed python bash curl openvpn wireguard-tools systemd-resolvconf util-linux nftables iproute2 polkit
+sudo pacman -U "$CG_BUILD_DIR/cyberghostvpn-1.5.0-7-x86_64.pkg.tar.zst"
 ```
 
-The reviewed 1.5.0-5 package was built and installed through the authorized Polkit flow. Its source checksums are synchronized in `PKGBUILD` and `.SRCINFO`. The vendor-generated WireGuard configuration was observed beneath root-owned mode `0700` `/etc/wireguard`; ordinary users cannot traverse that directory. Official account setup remains in the vendor client. Stop on conflicts or unexpected core upgrades. Do not run `pacman -Sy` or replace essential libraries.
+Complete account/device setup only through the official client flow:
 
-Use `sudo cyberghostvpn --setup` in your own terminal for official account/device setup. Never paste credentials, vendor configuration or logs into chat/Git. Do not invoke the vendor's uninstall command to remove this package; use the package manager after reviewing the transaction.
+```bash
+sudo cyberghostvpn --setup
+```
 
-## Tests and diagnostics
+Never paste credentials into this plugin, Git or shared test notes. Do not use
+the vendor uninstaller; remove the CLI package with the package manager after
+disconnecting. Removing the Omarchy plugin is a separate operation and does
+not remove the CLI or NetworkManager profiles.
+
+## Protection and current evidence
+
+The optional WireGuard kill switch is connection-scoped. During preparation,
+the IPv6 guard permits only the `systemd-resolve` UID to use TCP/UDP DNS ports
+53 and 853; the bootstrap exception is removed from active and blocked rules.
+Full blocking begins only after the client succeeds and the adapter identifies
+the tunnel. Intentional disconnect and location switching release the guard.
+Timeout/interruption cleanup is bounded; a detached descendant or hard helper
+kill can escape cleanup, and startup does not have a full-block guarantee.
+Ordinary status reports configured protection. Explicit Verify compares the
+current firewall fingerprint and tunnel interface index/mark at that moment;
+it is not continuous monitoring or a packet/leak test. See [SECURITY.md](SECURITY.md).
+
+Evidence is versioned:
+
+- Package 1.5.0-7 / API 4 fixes the reproduced WireGuard preparation failure:
+  only the `systemd-resolve` UID may use IPv6 TCP/UDP DNS ports 53/853 while
+  starting; the exception is removed for active and blocked rules. Namespace
+  rule tests and bounded startup/interruption/recovery tests passed.
+- Latest package 1.5.0-7 dual-stack DE/Frankfurt and NL/Amsterdam checks passed.
+  Public IPv6/default route were available at baseline, blocked while guarded,
+  and restored after disconnect. Randomized A and AAAA queries each used the
+  tunnel once with zero Wi-Fi egress. Direct IPv6 DNS and ordinary IPv6 were
+  blocked while guarded; a forced link-down retained IPv6/DNS blocking, and
+  the NL kill switch also blocked physical IPv4. Host addresses and disable
+  flags were preserved.
+- The beta 0.5 GUI flow passed on package 1.5.0-7 / API 4: mouse kill-switch
+  toggle, DE connect, tunnel-bound IPv4 lookup, protection verification, fresh
+  NL discovery, specific-server selection, mouse switch, changed tunnel-bound
+  IPv4, second verification and disconnect. The preference returned to off;
+  this exercised the real backend, not a fixture.
+- Recent 1.5.0-7 NL OpenVPN UDP and TCP sessions returned HTTPS from two
+  endpoints each at the default MTU. IPv6 remained routed over the physical
+  interface; prefer WireGuard. This does not establish that the earlier
+  OpenVPN failure's cause is fixed, and OpenVPN has no plugin kill switch.
+- Final native dark/light screens and UI-state fixtures were reviewed after one
+  correction batch. The independent review returned ship for the interface.
+  Captures remain private and are not published.
+
+The final host check passed with normal external IPv4/IPv6, a default IPv6
+route, disable flags at zero, NetworkManager/resolved active, and no VPN tunnel
+or guard metadata; the revoked NetworkManager profile remains preserved. The
+cause of the old 0.4 RA-route issue remains unknown; IPv6 routing was restored
+before these tests without changing routes, RA or firewall settings. The old
+0.4 ThinkPad run included native controls, Wi-Fi handoff and bounded
+suspend/resume. Those are historical results, not beta 0.5 or VM evidence. A
+VM cannot validate physical Wi-Fi roaming or laptop suspend/resume. A public
+IPv6 check requires a guest global IPv6 route and an independent external
+baseline; otherwise report it as untested. Never infer protection from a
+connected label, exit code or IPv6-disable flag.
+
+## Troubleshooting
+
+- **Missing dependency or old adapter:** run the preflight above; install the
+  reviewed package and dependencies, and confirm the helper reports API 4.
+- **Authentication failure:** complete account setup in the official client
+  locally. Never enter credentials in this panel or share client output.
+- **Timeout:** refresh status before retrying; a detached vendor process may
+  outlive the bounded helper cleanup.
+- **Traffic block remains:** disconnect first. Use Settings → **Release
+  CyberGhost traffic block**, or run the following to remove only this plugin's
+  guard. Do not flush unrelated firewall tables:
+
+  ```bash
+  pkexec /usr/local/cyberghost/omarchy-bridge --release-protection
+  ```
+- **OpenVPN fallback:** choose Settings → **Existing OpenVPN**, enter one valid
+  configured profile name and select **Use profile**. Missing, ambiguous or
+  non-OpenVPN profiles disable connection controls. Revoked provider records
+  can still pass local profile checks but fail provider authentication.
+
+## Credential-free checks
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m py_compile cg_bridge.py
+python3 -m py_compile cg_bridge.py packaging/cyberghostvpn/omarchy-bridge
 bash -n tools/host-baseline.sh
 omarchy plugin validate .
-python3 cg_bridge.py check
-python3 cg_bridge.py status
-python3 cg_bridge.py countries
-omarchy-shell petevo.cyberghost diagnostics
 ```
 
-Run the optional built-package tests with the actual private artifact:
+The workflow runs the mocked source suite on Python 3.12 and 3.14; 9
+artifact-dependent package tests skip without `CG_TEST_PACKAGE`. The current
+125-test suite passed locally with package 1.5.0-7 and no skips. Check PR #2
+for the latest remote CI result. Mock tests use no credentials or host-network
+changes.
 
-```bash
-CG_TEST_PACKAGE=/path/to/cyberghostvpn-1.5.0-5-x86_64.pkg.tar.zst \
-  python3 -m unittest discover -s tests -v
-```
-
-The current suite reports **105 passing tests with package tests enabled** (`CG_TEST_PACKAGE`). Automated tests use mocks, no account credentials, and make no host network changes. A separate isolated dual-stack nftables TCP test blocked unmarked IPv4/IPv6, allowed traffic carrying the WireGuard mark, and preserved an unrelated nftables table.
-
-A manual packet-behavior check is also available after reviewing the source and installing the reviewed package:
-
-```bash
-sudo /usr/bin/python3 -I tests/check_guard_namespace.py
-```
-
-It enters fresh disposable network namespaces before creating links or nftables rules, uses the installed helper’s policy, and exercises actual IPv4/IPv6 TCP traffic. It does not change host routes, DNS or firewall tables. It was run successfully on the ThinkPad; it is separate from the 105 mock/package tests.
-
-The installed Qt tool is `/usr/lib/qt6/bin/qmllint`. Its `qs` imports need the shell's virtual namespace mapped outside the plugin:
+Qt lint uses Omarchy's virtual `qs` import mapping:
 
 ```bash
 CG_QML_IMPORTS=$(mktemp -d)
@@ -135,41 +214,12 @@ ln -s /usr/share/omarchy/shell "$CG_QML_IMPORTS/qs"
 /usr/lib/qt6/bin/qmllint -I "$CG_QML_IMPORTS" -I /usr/lib/qt6/qml BarWidget.qml Panel.qml
 ```
 
-The final Qt6 lint exited 0 with 47 dynamic-property warnings and eight JavaScript declaration-style warnings; no syntax/import errors were reported. Check each warning; lint does not establish that the panel loads or renders correctly.
+Lint passed with 53 missing-property and 8 block-scope declaration warnings,
+and no syntax/import errors. Static lint does not validate native rendering or
+live VPN behavior.
 
-`bash tools/host-baseline.sh` takes a read-only network snapshot without making an external IP request. Keep its output local: it contains personal network details. Live tests use tunnel/route/DNS evidence and explicit opt-in public-IP checks. Do not include local/public IPs or DNS configuration in shared notes. A bidirectional handoff between the saved Wi-Fi and trusted hotspot passed with the same WireGuard tunnel and successful bound IPv4 after each change. A native suspend/resume check slept for 16 seconds, woke automatically, retained the tunnel and recovered bound IPv4; its kernel protection check passed. Cleanup disconnected and released the guard.
-
-## Troubleshooting and removal
-
-- **Unknown / status unavailable:** retry diagnostics. The UI clears stale Connected state on helper/status errors. Confirm NetworkManager and the named OpenVPN profile in a normal host terminal.
-- **Profile rejected:** select one unambiguous OpenVPN profile; Wi-Fi, WireGuard and other VPN types cannot be activated through the fallback.
-- **Another VPN active:** deliberately disconnect it first. The plugin refuses overlapping NetworkManager VPNs; vendor `--stop` may affect multiple VPNs.
-- **CLI setup incomplete:** complete the established client setup locally. Do not weaken ownership checks or create a password cache in the plugin.
-- **CLI lists empty:** inspect installed help and redacted list formatting locally. The parser does not guess country/city names.
-- **Authorization cancelled:** retry when you can approve the system prompt. A missing adapter requires the reviewed package, not a user-writable root script.
-- **Timeout:** refresh before retrying. A privileged child may still be finishing; the user lock does not guarantee termination of vendor descendants after a crash or timeout.
-- **IPv6 missing after disconnect:** the tested host returned IPv6-disable flags to 0 but did not recover its previous RA default route. Native NetworkManager reapply, same-profile activation and one full reconnect did not restore it; normal IPv4 remained usable. Do not infer IPv6 recovery from sysctl flags alone. This build has no verified IPv6 leak protection.
-- **Traffic block remains after a failure:** use **Restore normal networking**, or Settings → **Release CyberGhost traffic block**. The latter releases only this plugin’s guard. A local terminal can run `pkexec /usr/local/cyberghost/omarchy-bridge --stop`; approve authentication locally. Do not flush unrelated firewall tables.
-- **Public IP failure:** the lookup is optional and uses IPv4 only. It does not prove DNS or IPv6 protection. The panel labels a successful address as the last lookup.
-- **Trusted CLI unavailable:** check package ownership and parent-directory permissions in the host session. Do not relax executable trust checks to accommodate a remapped or writable installation.
-
-After deliberately disconnecting any active VPN, remove the widget with Omarchy's native commands:
-
-```bash
-omarchy plugin disable petevo.cyberghost
-omarchy plugin remove petevo.cyberghost
-```
-
-This removes the plugin checkout, not the vendor CLI package or your NetworkManager profile. Review the package-manager transaction separately to remove the CLI package; do not run the vendor uninstaller.
-
-The optional kill switch is available only for Official CLI WireGuard. The preparatory guard restricts IPv6; the full IPv4/IPv6 block starts only after the client connects successfully and the WireGuard device is identified. A failed startup attempts rollback and retains a block, but helper death before full activation is not covered by a full-block guarantee. Intentional disconnect releases the block, and location switching temporarily releases it between sessions. See [SECURITY.md](SECURITY.md) for the precise scope.
-
-## Runtime evidence and remaining checks
-
-The reviewed 1.5.0-5 package was installed through the authorized Polkit flow. An agent-run DE/Frankfurt OpenVPN session produced an `ovpn` tunnel with the IPv4 route and a successful bound IPv4 lookup. An NL automatic OpenVPN session connected and had a route, DNS setup and ICMP connectivity, but HTTPS stalled against three IPv4 endpoints while the normal network remained usable; it was disconnected and recovery succeeded. This protocol/location combination is not considered verified.
-
-An explicitly discovered NL Amsterdam WireGuard server (`amsterdam-s405-i23`) connected through the official client. Kernel and NetworkManager external-device checks agreed, the client output reported the selected server, an independent country lookup reported NL, and the bound public IPv4 differed from the DE session. A bounded capture of one randomized DNS query observed one outgoing packet on `cyberghost` and none on Wi-Fi; this verifies only that tested query path, not public IPv6 DNS or general leak protection. The doc-prefix IPv6 address survived connect/disconnect and host IPv6-disable flags remained 0. The previous IPv6 RA default route is still absent; a bounded router-discovery probe saw no valid advertisement during 12 seconds, which does not establish the cause. No saved Wi-Fi settings or unrelated firewall rules were changed.
-
-With the kill switch enabled, the NL Amsterdam session had a different bound public IPv4 from the DE session and direct Wi-Fi IPv4 was blocked. A forced WireGuard link-down retained the traffic guard and blocked physical IPv4; link-up restored connectivity. Intentional disconnect removed the CyberGhost nftables table and restored normal IPv4. An explicit protection check compares the current kernel-reported nftables table fingerprint and WireGuard interface index/fwmark with the recorded values; it does not verify packets, handshake, provider identity, or IPv6 DNS.
-
-The native panel loaded in the existing shell. Actual mouse checks passed bar opening with location discovery, tabs, the kill-switch toggle, connect, protection verification, saved individual-server selection, location switching and disconnect. Native Locations/Details/Settings renders were checked in dark and light themes at 1920×1080/150%; the original theme was restored. An independent Impeccable review returned `ship` with no material blockers. Keyboard tests exercised searchable country/city/server pickers, protocol revalidation, connect/switch/disconnect, details/settings, the explicit IP lookup and Escape/reopen. Favorites survived a native shell restart and passed apply/remove/resave checks. Plugin discovery, disable, removal, restoration and re-enable were exercised, preserving saved favorites and other plugin enabled states. Wi-Fi handoff in both directions and bounded suspend/resume passed, with the same tunnel and recovered bound IPv4. External public IPv6 recovery/leak checks remain blocked by the lack of current router advertisements/global IPv6 on the available networks. The NetworkManager fallback attempt failed; the user confirmed its provider-side record had been deleted. The obsolete profile was preserved and its activation attempt stopped. It needs a separately provisioned provider configuration to become usable again. Automatic reconnect is not implemented.
+To remove the widget, disconnect first, then run `omarchy plugin disable
+petevo.cyberghost` and `omarchy plugin remove petevo.cyberghost`. Remove the
+vendor package separately through the package manager after reviewing its
+transaction. Never run the vendor uninstaller or change unrelated connections
+or firewall rules.

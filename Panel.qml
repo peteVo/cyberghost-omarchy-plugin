@@ -37,11 +37,11 @@ Ui.Panel {
   readonly property bool connected: vpn && vpn.snapshot.state === "connected"
   readonly property bool canDisconnect: vpn && vpn.snapshot.can_disconnect === true
   readonly property bool dynamicReady: vpn && vpn.dynamicMode
-  readonly property bool canSwitch: dynamicReady && canDisconnect && targetReady()
+  readonly property bool canSwitch: dynamicReady && connected && canDisconnect && targetReady()
   onOpenedChanged: if (opened && vpn && !vpn.working) vpn.refresh()
 
   function targetReady() {
-    if (!vpn || !dynamicReady || vpn.protocolRefresh || !vpn.selectedCountry
+    if (!vpn || !dynamicReady || !vpn.setupReady || vpn.protocolRefresh || !vpn.selectedCountry
         || !vpn.discovery.items.some(function(item) { return item.code === vpn.selectedCountry })) return false
     if (vpn.killSwitch && vpn.selectedProtocol !== "wireguard") return false
     if (vpn.selectedCity && vpn.cities.items.indexOf(vpn.selectedCity) < 0) return false
@@ -82,6 +82,14 @@ Ui.Panel {
     var minutes = Math.floor(seconds / 60)
     var hours = Math.floor(minutes / 60)
     return hours ? hours + "h " + (minutes % 60) + "m" : minutes + "m"
+  }
+  function panelBounds() {
+    const point = content.mapToGlobal(-popup.padding - Border.left(popup.borderSpec),
+                                     -popup.padding - Border.top(popup.borderSpec))
+    return { x: point.x, y: point.y, width: popup.contentWidth, height: popup.contentHeight }
+  }
+  function revealMessage() {
+    Qt.callLater(function() { if (root.opened && errorLabel.visible) root.revealFocus(errorLabel) })
   }
 
   function open() {
@@ -205,9 +213,10 @@ Ui.Panel {
           }
           Label {
             visible: root.dynamicReady
-            text: root.vpn && root.vpn.snapshot.kill_switch === true ? "Kill switch configured · Verify in Settings"
+            text: root.vpn && root.vpn.snapshot.state === "recovery-required" ? "Protection unconfirmed · Restore or verify in Settings."
+              : root.vpn && root.vpn.snapshot.kill_switch === true ? "Kill switch configured · Verify in Settings"
               : root.vpn && root.vpn.snapshot.ipv6_guard === true ? "IPv6 guard configured · No kill switch"
-              : root.vpn && (root.vpn.snapshot.protocol === "OpenVPN" || (!root.connected && root.vpn.selectedProtocol !== "wireguard")) ? "OpenVPN protection is unverified. Prefer WireGuard."
+              : root.vpn && (root.vpn.snapshot.protocol === "OpenVPN" || (!root.connected && root.vpn.selectedProtocol !== "wireguard")) ? "Automatic/OpenVPN does not enable the IPv6 guard. Native IPv6 may bypass the VPN. Prefer WireGuard."
               : root.connected ? "Protection is not recorded. Check the client setup."
               : "Protection starts after connection. Check Settings."
             font.pixelSize: Style.font.bodySmall
@@ -217,6 +226,12 @@ Ui.Panel {
             text: "Switching temporarily releases the traffic block."
             font.pixelSize: Style.font.bodySmall
           }
+          Label {
+            visible: root.vpn && !root.canDisconnect && root.vpn.setupMessage.length > 0
+              && root.vpn.setupMessage !== root.vpn.message
+            text: root.vpn ? root.vpn.setupMessage : ""
+            Accessible.role: Accessible.AlertMessage
+          }
           Action {
             objectName: "vpnConnectAction"
             width: parent.width
@@ -225,7 +240,7 @@ Ui.Panel {
               : root.canDisconnect ? "Disconnect VPN"
               : root.dynamicReady ? "Connect selected location" : "Connect VPN"
             enabled: root.vpn && !root.vpn.working && (root.canDisconnect ? true
-              : root.vpn.snapshot.can_connect === true && (!root.dynamicReady || root.targetReady()))
+              : root.vpn.setupReady && root.vpn.snapshot.can_connect === true && (!root.dynamicReady || root.targetReady()))
             bordered: true
             foreground: root.ink
             selected: root.connected
@@ -240,6 +255,7 @@ Ui.Panel {
             onClicked: root.vpn.invoke("switch")
           }
           Label {
+            id: errorLabel
             visible: root.vpn && root.vpn.message.length > 0
             text: root.vpn ? root.vpn.message : ""
             font.bold: true
@@ -288,10 +304,16 @@ Ui.Panel {
               width: parent.width
               label: "Protocol"
               value: root.vpn ? root.vpn.selectedProtocol : "auto"
-              options: [{ value: "auto", label: "Automatic" }, { value: "wireguard", label: "WireGuard" }, { value: "openvpn", label: "OpenVPN" }]
+              options: [{ value: "auto", label: "Automatic · experimental" }, { value: "wireguard", label: "WireGuard" }, { value: "openvpn", label: "OpenVPN · experimental" }]
               foreground: root.ink
               enabled: root.vpn && !root.vpn.working && !root.vpn.protocolRefresh
               onChanged: function(value) { root.vpn.selectProtocol(value) }
+            }
+            Label {
+              visible: root.canDisconnect && root.vpn && root.vpn.snapshot.protocol === "WireGuard"
+                && root.vpn.selectedProtocol !== "wireguard"
+              text: "Next connection · Automatic/OpenVPN does not enable the IPv6 guard. Native IPv6 may bypass the VPN."
+              font.pixelSize: Style.font.bodySmall
             }
             Ui.SearchableDropdown {
               id: serverPicker
@@ -386,7 +408,7 @@ Ui.Panel {
               enabled: root.connected && root.vpn && !root.vpn.working
               onClicked: root.vpn.invoke("ip")
             }
-            Label { text: "Optional: contacts api.ipify.org. Connection status does not verify routing, DNS or your location."; font.pixelSize: Style.font.bodySmall }
+            Label { text: "Optional: contacts api.ipify.org through the detected VPN interface. Status detects a tunnel and route; it does not continuously check handshakes, DNS or your location."; font.pixelSize: Style.font.bodySmall }
             Label {
               visible: root.connected && root.vpn && root.vpn.snapshot.ipv6_disabled === true
               text: "IPv6 was observed disabled while connected. This does not verify leak protection or whether IPv6 returns after disconnect."
@@ -431,9 +453,24 @@ Ui.Panel {
             onClicked: root.vpn.selectProfile(profileField.text)
           }
           Action {
+            objectName: "vpnRefreshDiagnostics"
             text: root.vpn && root.vpn.working ? "Checking…" : "Refresh diagnostics"
             enabled: root.vpn && !root.vpn.working
             onClicked: root.vpn.refresh()
+          }
+          Repeater {
+            model: root.vpn ? root.vpn.setupChecks.filter(function(item) { return item.ready !== true }) : []
+            delegate: Label {
+              required property var modelData
+              text: (modelData.ready === true ? "Ready · " : "Needs attention · ") + modelData.label
+                + (modelData.ready === true ? "" : "\n" + modelData.message)
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
+          Label {
+            visible: root.vpn && root.vpn.setupReady
+            text: "Local setup is ready. Account authentication is checked when connecting."
+            font.pixelSize: Style.font.bodySmall
           }
           Label {
             text: root.vpn && root.vpn.hasVendor ? "Official CLI detected. Arch/Omarchy integration is experimental; connection status does not establish privacy protection."
@@ -445,7 +482,7 @@ Ui.Panel {
             visible: root.dynamicReady
             width: parent.width
             label: "Kill switch · WireGuard"
-            checked: root.vpn && root.vpn.killSwitch
+            checked: root.vpn && (root.canDisconnect ? root.vpn.snapshot.kill_switch === true : root.vpn.killSwitch)
             enabled: root.vpn && !root.vpn.working && !root.canDisconnect
               && (root.vpn.selectedProtocol === "wireguard" || checked)
             opacity: enabled ? 1 : 0.5

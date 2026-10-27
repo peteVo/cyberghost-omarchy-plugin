@@ -1,9 +1,48 @@
 # Native Omarchy VPN panel
 
-Operate mode for a 13-inch ThinkPad. Preserve the installed Omarchy visual world: `Ui.BarIconButton`, `Ui.Panel`, `Ui.KeyboardPanel`, `Ui.PanelHero`, native buttons, searchable dropdowns, text field, section labels and separators. A 360-unit panel fits to the available screen and scrolls above 550 units. Qt controls own text editing and Tab navigation; Escape closes, and focused controls scroll into view.
+Operate mode for a 13-inch ThinkPad. Preserve Omarchy's native `Ui.BarIconButton`,
+`Ui.Panel`, `Ui.KeyboardPanel`, `Ui.PanelHero`, buttons, searchable dropdowns,
+text fields, section labels and separators. Keep the panel within its 360-unit
+design width and scroll above 550 units. Use the existing shell process and
+settings API; do not add a daemon or second Quickshell.
 
-Typography uses `Style.font`; spacing, borders, focus, hover and animation come from the shell's controls and tokens. Text uses the popup theme palette in both light and dark themes. CyberGhost yellow is limited to the connected CG mark. All external content is plain text. Connection state, selected next location and last public-IP lookup are separate concepts.
+Use `Style.font` and the shell's spacing, border, focus, hover, animation and
+theme tokens. Follow the popup palette in dark and light themes; reserve
+CyberGhost yellow for the connected mark. Render external text as plain text.
+Keep connection state, selected next location and last public-IP lookup
+separate.
 
-The main action stays disabled until a backend can confirm an actionable state. Loading, unknown, dependency, profile, authorization, location-empty and retry states are explicit. Country/city search uses native controls and exposes only discovered options. The official backend includes protocol/server selection, favorites and location switching. Backend, profile, protocol, favorites and the optional kill-switch preference persist through the native shell settings API. Connection metadata is labeled as requested or client-reported, never as independently verified endpoint identity. The WireGuard-only connection-scoped kill switch has an explicit opt-in control and explains its connection/switch scope. Protection is labeled configured; an explicit privileged check compares the current kernel rules and tunnel generation. Automatic server reconnection is unavailable and has no pretend control.
+Keep the primary action disabled until local prerequisites and backend state
+make it actionable. Make loading, unknown, dependency, profile, authorization,
+location-empty, waiting-network and recovery states clear and actionable.
+Keyboard behavior stays native: Qt controls own editing and Tab navigation;
+Escape closes and focused content scrolls into view. Offer only discovered
+locations and servers. Label requested or client-reported location as such;
+never imply independent provider verification.
 
-Source/API and accessibility paths were reviewed using Impeccable. The panel rendered in the existing Omarchy shell at 1920×1080 and 150% scaling. The bounded correction grouped Locations, Details and Settings and kept current connection information above the actions. Keyboard checks covered search/selection, protocol, favorites, connect/switch/disconnect, IP lookup and Escape/reopen. Favorites survived a native restart; a cold-start stale-backend response was fixed. The installed shell retained cached QML on hot reload, so final source changes were loaded with native restarts while unlocked. The 0.4 confirmation batch covered actual mouse opening/tab selection/toggle/connect/verify/switch/disconnect and keyboard city search and Escape. Mouse opening initially failed to discover locations; a shared opened-state handler fixed every entry path. Native dark/light Locations, Details and Settings captures were inspected after one correction batch. The original theme was restored. The new toggle explanation uses the normal full-contrast text palette. Qt lint has dynamic-property and JavaScript-style warnings; it is not visual evidence. The independent Impeccable finish review returned `ship` with no material fixes after inspecting the final native captures.
+The optional WireGuard kill switch is connection-scoped. Explain that full
+blocking starts after connection and tunnel identification, and intentional
+disconnect or switching releases it. Status reports configuration; explicit
+Verify checks the current firewall fingerprint and tunnel generation. Neither
+is continuous monitoring or proof of packets, handshake, provider identity or
+universal leak protection. Preserve the startup and hard-kill caveats in the
+interface.
+
+## Verification
+
+The native panel rendered in the existing shell at 1920×1080 and 150% scaling.
+Final dark/light Locations, Details and Settings views and state fixtures were
+reviewed after one correction batch. The independent interface review returned
+ship. Keep all final captures private and unpublished.
+
+The actual beta 0.5 GUI flow passed on package 1.5.0-7/API 4: mouse kill-switch
+toggle, DE connect, tunnel-bound IPv4 lookup, protection Verify, fresh NL
+discovery, specific-server selection, mouse switch, distinct tunnel-bound
+IPv4, Verify and disconnect. The preference returned to off. Keyboard search,
+selection and Escape checks passed. Package 1.5.0-7 dual-stack tests also
+verified the connection guard, DNS routing and recovery; see [README.md](README.md)
+and [SECURITY.md](SECURITY.md) for measured limits.
+
+Qt lint completed without syntax or import errors; it reports 53
+missing-property and 8 block-scope declaration warnings. Lint does not verify
+rendering. A fresh second-PC Omarchy 4 VM remains untested.

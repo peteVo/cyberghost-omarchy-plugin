@@ -35,6 +35,9 @@ Ui.BarWidget {
   property bool awaiting: false
   property int helperExit: -1
   property bool hasVendor: false
+  property bool setupReady: false
+  property var setupChecks: []
+  property string setupMessage: ""
   property bool killSwitch: setting("killSwitch", false) === true
   readonly property bool busy: awaiting && (pending === "connect" || pending === "switch" || pending === "disconnect" || pending === "release-protection")
   readonly property bool working: awaiting
@@ -92,6 +95,9 @@ Ui.BarWidget {
   function selectBackend(value) {
     if (working || value === backendMode) return
     backendMode = value
+    setupReady = false
+    setupChecks = []
+    setupMessage = "Checking local setup…"
     persistSettings({ backend: value })
     selectedCountry = ""
     resetLocations()
@@ -226,6 +232,26 @@ Ui.BarWidget {
       data = JSON.parse(output.text)
       if (!data || typeof data !== "object" || Array.isArray(data) || typeof data.ok !== "boolean")
         throw new Error("Invalid response object")
+      if (data.ok && (task === "countries" || task === "cities" || task === "servers")) {
+        if (!Array.isArray(data.items)) throw new Error("Invalid location list")
+        if (data.items.some(function(item) {
+          return task === "cities" ? typeof item !== "string"
+            : !item || typeof item !== "object" || typeof item.name !== "string"
+              || (task === "countries" && typeof item.code !== "string")
+        })) throw new Error("Invalid location entry")
+      }
+      if (data.ok && task === "check" && (!Array.isArray(data.prerequisites)
+          || typeof data.setup_ready !== "boolean"
+          || data.prerequisites.some(function(item) {
+            return !item || typeof item !== "object" || typeof item.ready !== "boolean"
+              || typeof item.label !== "string" || typeof item.message !== "string"
+          }))) throw new Error("Invalid setup checks")
+      if (data.ok && ["check", "status", "connect", "switch", "disconnect", "release-protection"].indexOf(task) >= 0
+          && (["unknown", "connected", "disconnected", "connecting", "disconnecting", "waiting-network", "blocked", "recovery-required"].indexOf(data.state) < 0
+              || typeof data.can_connect !== "boolean" || typeof data.can_disconnect !== "boolean"))
+        throw new Error("Invalid connection state")
+      if (data.ok && task === "ip" && (typeof data.ip !== "string" || !data.ip.length))
+        throw new Error("Invalid IP result")
     } catch (e) {
       data = { ok: false, error: "Cannot read the VPN helper response. Refresh, then check Python and the plugin installation." }
     }
@@ -248,6 +274,8 @@ Ui.BarWidget {
       }
       if (task === "countries" || task === "cities" || task === "servers") favoriteToApply = null
       if (task === "countries" || task === "cities") protocolRefresh = false
+      if (task === "check") { setupReady = false; setupMessage = message }
+      if (panelLoader.item) panelLoader.item.revealMessage()
       return
     }
     if (task === "countries") {
@@ -334,8 +362,12 @@ Ui.BarWidget {
       }
       snapshot = data
       message = data.error || data.warning || ""
+      if (message && panelLoader.item) panelLoader.item.revealMessage()
       if (task === "check") {
         hasVendor = data.has_vendor === true
+        setupReady = data.setup_ready === true
+        setupChecks = arrayFrom(data.prerequisites)
+        setupMessage = String(data.setup_message || "")
         if (dynamicMode && opened && !discovery.items.length)
           Qt.callLater(function() { root.invoke("countries") })
       }
@@ -351,6 +383,7 @@ Ui.BarWidget {
         focused: panelLoader.item ? panelLoader.item.panelFocused === true : false,
         focusControl: panelLoader.item ? panelLoader.item.focusControl : "",
         focusRect: panelLoader.item ? panelLoader.item.focusRect : null,
+        panelRect: panelLoader.item ? panelLoader.item.panelBounds() : null,
         search: panelLoader.item ? panelLoader.item.searchPlaceholder : "",
         section: panelLoader.item ? panelLoader.item.section : "",
         working: root.working, pending: root.pending, state: root.snapshot.state,
@@ -358,6 +391,7 @@ Ui.BarWidget {
         protocol: root.selectedProtocol, server: root.selectedServer,
         killSwitch: root.killSwitch, configuredKillSwitch: root.snapshot.kill_switch === true,
         ipv6Guard: root.snapshot.ipv6_guard === true,
+        setupReady: root.setupReady, setupChecks: root.setupChecks.length,
         favorites: root.favorites.length, hasIp: root.publicIp.length > 0, message: root.message })
     }
   }
