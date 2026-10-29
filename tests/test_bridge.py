@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, ExitStack
 from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import call, patch
@@ -23,11 +23,12 @@ _test_state_home = None
 _test_runtime_dir = None
 _test_environment = None
 _protection_patch = None
+_prerequisite_patch = None
 _real_traffic_protection = b.traffic_protection
 
 
 def setUpModule():
-    global _test_state_home, _test_runtime_dir, _test_environment, _protection_patch
+    global _test_state_home, _test_runtime_dir, _test_environment, _protection_patch, _prerequisite_patch
     _test_state_home = tempfile.TemporaryDirectory(prefix="cg-test-state-")
     _test_runtime_dir = tempfile.TemporaryDirectory(prefix="cg-test-runtime-")
     _test_environment = patch.dict(os.environ, {
@@ -37,9 +38,14 @@ def setUpModule():
     _test_environment.start()
     _protection_patch = patch.object(b, "traffic_protection", return_value=None)
     _protection_patch.start()
+    _prerequisite_patch = patch.object(b, "prerequisites", return_value=[{
+        "id": "fixture", "label": "Test prerequisites", "ready": True, "message": "Available."
+    }])
+    _prerequisite_patch.start()
 
 
 def tearDownModule():
+    _prerequisite_patch.stop()
     _protection_patch.stop()
     _test_environment.stop()
     _test_runtime_dir.cleanup()
@@ -181,48 +187,37 @@ class VendorPathTests(unittest.TestCase):
         )
 
     def test_accepts_symlink_to_root_owned_system_target(self):
-        mocks = self._path_mocks()
-        for mocked in mocks:
-            mocked.start()
-        self.addCleanup(patch.stopall)
-        self.assertEqual(b.safe_vendor_binary(), "/opt/cyberghostvpn")
+        with ExitStack() as stack:
+            for mocked in self._path_mocks(): stack.enter_context(mocked)
+            self.assertEqual(b.safe_vendor_binary(), "/opt/cyberghostvpn")
 
     def test_rejects_writable_target_or_parent(self):
         for unsafe in ("/opt/cyberghostvpn", "/opt"):
-            with self.subTest(path=unsafe):
-                mocks = self._path_mocks(bad_path=unsafe)
-                for mocked in mocks:
-                    mocked.start()
+            with self.subTest(path=unsafe), ExitStack() as stack:
+                for mocked in self._path_mocks(bad_path=unsafe): stack.enter_context(mocked)
                 self.assertIsNone(b.safe_vendor_binary())
-                patch.stopall()
 
     def test_rejects_writable_system_symlink_parent(self):
-        mocks = self._path_mocks(bad_path="/usr")
-        for mocked in mocks:
-            mocked.start()
-        self.addCleanup(patch.stopall)
-        self.assertIsNone(b.safe_vendor_binary())
+        with ExitStack() as stack:
+            for mocked in self._path_mocks(bad_path="/usr"): stack.enter_context(mocked)
+            self.assertIsNone(b.safe_vendor_binary())
 
     def test_rejects_component_with_effective_write_access(self):
         access = lambda path, mode: mode == os.X_OK or (mode == os.W_OK and str(path) == "/opt")
-        mocks = self._path_mocks(access=access)
-        for mocked in mocks:
-            mocked.start()
-        self.addCleanup(patch.stopall)
-        self.assertIsNone(b.safe_system_binary("/usr/bin/cyberghostvpn"))
+        with ExitStack() as stack:
+            for mocked in self._path_mocks(access=access): stack.enter_context(mocked)
+            self.assertIsNone(b.safe_system_binary("/usr/bin/cyberghostvpn"))
 
     def test_missing_binary_returns_none_without_trusting_path(self):
-        mocks = self._path_mocks(missing=True)
-        for mocked in mocks:
-            mocked.start()
-        self.addCleanup(patch.stopall)
-        with patch.object(b.shutil, "which", return_value="/tmp/fake-cyberghostvpn"):
-            self.assertIsNone(b.safe_vendor_binary())
+        with ExitStack() as stack:
+            for mocked in self._path_mocks(missing=True): stack.enter_context(mocked)
+            with patch.object(b.shutil, "which", return_value="/tmp/fake-cyberghostvpn"):
+                self.assertIsNone(b.safe_vendor_binary())
 
     def test_privileged_command_requires_reviewed_vendor_and_adapter(self):
         adapter = "/usr/local/cyberghost/omarchy-bridge"
         with patch.object(b, "safe_system_binary", return_value=adapter), \
-             patch.object(b, "run", return_value="omarchy-bridge 2\n") as run:
+             patch.object(b, "run", return_value="omarchy-bridge 4\n") as run:
             self.assertEqual(b.privileged_command("/usr/local/cyberghost/cyberghostvpn"),
                              ["/usr/bin/pkexec", adapter])
         self.assertEqual(run.call_args, call([adapter, "--version"], timeout=3))
@@ -231,7 +226,7 @@ class VendorPathTests(unittest.TestCase):
             with self.assertRaises(b.BridgeError) as caught:
                 b.privileged_command("/usr/local/cyberghost/cyberghostvpn")
         self.assertEqual(caught.exception.code, "dependency")
-        self.assertIn("1.5.0-5", str(caught.exception))
+        self.assertIn("1.5.0-7", str(caught.exception))
         run.assert_called_once_with([adapter, "--version"], timeout=3)
 
     def test_old_reviewed_helper_is_allowed_for_stop_but_not_connect(self):
@@ -628,12 +623,37 @@ class TrafficProtectionTests(unittest.TestCase):
              patch.object(b, "uplink_ready") as uplink, \
              patch.object(Path, "read_text", autospec=True, return_value="0"):
             result = b.status("cyberghost", "official-cli")
-        self.assertEqual(result["state"], "unknown")
+        self.assertEqual(result["state"], "recovery-required")
         self.assertTrue(result["can_disconnect"])
         self.assertTrue(result["can_release_protection"])
         self.assertFalse(result["ipv6_guard"])
         self.assertFalse(result["kill_switch"])
         uplink.assert_not_called()
+
+    def test_prepared_guard_reports_unconfirmed_setup_without_claiming_kill_switch(self):
+        protection = self.protection(phase="prepared", interface_index=0, mark=0, kill_switch=False)
+        with patch.object(b, "traffic_protection", return_value=protection), \
+             patch.object(b, "vendor_binary", return_value="/trusted/vendor"), \
+             patch.object(b, "wireguard_status", return_value=None), \
+             patch.object(b, "active_connections", return_value=[]), \
+             patch.object(Path, "read_text", return_value="0"):
+            result = b.status("cyberghost", "official-cli")
+        self.assertEqual(result["state"], "recovery-required")
+        self.assertEqual(result["protection_phase"], "prepared")
+        self.assertFalse(result["kill_switch"])
+        self.assertIn("before protection was confirmed", result["error"])
+
+    def test_release_needs_only_trusted_adapter_when_vendor_is_missing(self):
+        with patch.object(b, "traffic_protection", return_value=self.protection(uid=1000)), \
+             patch.object(b.os, "getuid", return_value=1000), \
+             patch.object(b, "vendor_binary", side_effect=b.BridgeError("missing vendor")) as vendor, \
+             patch.object(b, "privileged_command", return_value=["/usr/bin/pkexec", "/adapter"]), \
+             patch.object(b, "run", return_value="") as run, \
+             patch.object(b, "status", return_value={"state": "disconnected"}):
+            result = b.operate("release-protection", "DE", "", "cyberghost", "official-cli")
+        vendor.assert_not_called()
+        self.assertEqual(run.call_args.args[0], ["/usr/bin/pkexec", "/adapter", "--release-protection"])
+        self.assertEqual(result["state"], "disconnected")
 
 
 class OfficialCliTests(unittest.TestCase):
@@ -1027,11 +1047,23 @@ class PublicIpTests(unittest.TestCase):
             self.assertEqual(b.dispatch(args("ip")), {"ip": "1.1.1.1"})
         self.assertEqual(run.call_args.args[0][0], "/usr/bin/curl")
         self.assertIn("--noproxy", run.call_args.args[0])
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[argv.index("--interface") + 1], "if!tun0")
+
+    def test_ip_lookup_never_resolves_an_invalid_interface_as_a_hostname(self):
+        for device in (None, "", "if!attacker", "a" * 16):
+            with self.subTest(device=device), \
+                 patch.object(b, "status", return_value={"state": "connected", "device": device}), \
+                 patch.object(b, "run") as run:
+                with self.assertRaises(b.BridgeError) as caught:
+                    b.dispatch(args("ip"))
+                self.assertEqual(caught.exception.code, "unconfirmed")
+                run.assert_not_called()
 
     def test_invalid_or_non_global_ip_response_is_sanitized(self):
         for value in ("not-an-ip", "192.168.1.2", "203.0.113.10"):
             with self.subTest(value=value), \
-                 patch.object(b, "status", return_value={"state": "connected"}), \
+                 patch.object(b, "status", return_value={"state": "connected", "device": "tun0"}), \
                  patch.object(b, "run", return_value=value):
                 with self.assertRaises(b.BridgeError) as caught:
                     b.dispatch(args("ip"))
@@ -1043,7 +1075,7 @@ class PublicIpTests(unittest.TestCase):
             with self.assertRaises(b.BridgeError):
                 b.dispatch(args("ip"))
             run.assert_not_called()
-        with patch.object(b, "status", side_effect=[{"state": "connected"}, {"state": "disconnected"}]), \
+        with patch.object(b, "status", side_effect=[{"state": "connected", "device": "tun0"}, {"state": "disconnected"}]), \
              patch.object(b, "run", return_value="1.1.1.1"):
             with self.assertRaises(b.BridgeError) as caught:
                 b.dispatch(args("ip"))

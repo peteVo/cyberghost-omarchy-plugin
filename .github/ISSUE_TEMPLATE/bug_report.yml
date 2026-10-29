@@ -1,0 +1,85 @@
+name: Bug report
+description: Report a reproducible problem with the Omarchy integration
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Share only the safe report copied from the panel, or the limited
+        versions and steps below. Do not attach raw logs, credentials, keys,
+        configuration files, IPs, DNS names, SSIDs, server lists, usernames,
+        personal paths, packet captures or screenshots containing network
+        details. See CONTRIBUTING.md.
+  - type: input
+    id: commit
+    attributes:
+      label: Plugin commit
+      description: Full commit SHA; for a candidate, use the exact PR head.
+      placeholder: 40-character SHA
+    validations:
+      required: true
+  - type: input
+    id: package
+    attributes:
+      label: Compatibility package version
+      placeholder: e.g. 1.5.0-8 / API 4, or not installed
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Official client version
+      placeholder: Version only, or not installed
+    validations:
+      required: false
+  - type: input
+    id: platform
+    attributes:
+      label: Omarchy version
+      placeholder: e.g. 4.0.6
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend and protocol
+      options:
+        - Official CLI / WireGuard
+        - Official CLI / OpenVPN
+        - Existing NetworkManager OpenVPN profile
+        - Setup or diagnostics only
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use generic country/city labels; do not include selected server names or personal network details.
+      placeholder: |
+        1. Open the panel
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: safe_report
+    attributes:
+      label: Safe diagnostic report
+      description: Paste the panel's generated diagnostic report here. Remove anything you do not want public.
+    validations:
+      required: false
+  - type: textarea
+    id: error
+    attributes:
+      label: Sanitized GUI message
+      description: Copy only the user-facing message. Do not paste terminal or vendor output.
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I checked this report and removed account data, IPs, DNS names, SSIDs, server names, usernames, personal paths, logs, captures and sensitive screenshots.
+          required: true

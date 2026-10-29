@@ -22,6 +22,7 @@ LOADER.exec_module(adapter)
 class Account:
     pw_name = "alice"
     pw_dir = "/home/alice"
+    pw_uid = 53
 
     @property
     def pw_passwd(self):
@@ -73,15 +74,43 @@ class AuthorizerTests(unittest.TestCase):
 
     def test_vendor_wrapper_uses_fixed_binary_and_closes_inherited_descriptors(self):
         environment = {"PATH": "/usr/bin:/bin", "HOME": "/home/alice"}
-        with patch.object(adapter.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as command:
+        process = SimpleNamespace(pid=123, returncode=0, wait=unittest.mock.Mock(return_value=0))
+        with patch.object(adapter.subprocess, "Popen", return_value=process) as command, \
+             patch.object(adapter.os, "killpg") as killpg:
             result = adapter.vendor(["--stop"], environment)
         self.assertEqual(result, 0)
         self.assertEqual(command.call_args.args[0], [adapter.VENDOR, "--stop"])
         self.assertEqual(command.call_args.kwargs["env"], environment)
-        self.assertEqual(command.call_args.kwargs["timeout"], 45)
         self.assertEqual(command.call_args.kwargs["stdin"], adapter.subprocess.DEVNULL)
         self.assertTrue(command.call_args.kwargs["close_fds"])
+        self.assertTrue(command.call_args.kwargs["start_new_session"])
+        self.assertEqual(command.call_args.kwargs["umask"], 0o077)
         self.assertNotIn("pass_fds", command.call_args.kwargs)
+        self.assertEqual(command.return_value.wait.call_args.kwargs["timeout"], 45)
+        killpg.assert_not_called()
+
+    def test_vendor_timeout_or_interruption_kills_only_its_live_process_group(self):
+        for failure in (subprocess.TimeoutExpired(adapter.VENDOR, 120), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__):
+                process = SimpleNamespace(pid=123, returncode=None)
+                process.wait = unittest.mock.Mock(side_effect=[failure, -9])
+                with patch.object(adapter.subprocess, "Popen", return_value=process) as spawn, \
+                     patch.object(adapter.os, "killpg") as killpg:
+                    with self.assertRaises(type(failure)):
+                        adapter.vendor(["--connect"], {"PATH": "/usr/bin:/bin"})
+                self.assertEqual(spawn.call_args.kwargs["umask"], 0o077)
+                self.assertEqual(process.wait.call_args_list[0].kwargs["timeout"], 120)
+                self.assertEqual(process.wait.call_args_list[1].kwargs["timeout"], 3)
+                killpg.assert_called_once_with(123, adapter.signal.SIGKILL)
+
+    def test_vendor_interruption_does_not_kill_a_process_that_already_exited(self):
+        process = SimpleNamespace(pid=123, returncode=0)
+        process.wait = unittest.mock.Mock(side_effect=[KeyboardInterrupt(), 0])
+        with patch.object(adapter.subprocess, "Popen", return_value=process), \
+             patch.object(adapter.os, "killpg") as killpg:
+            with self.assertRaises(KeyboardInterrupt):
+                adapter.vendor(["--connect"], {"PATH": "/usr/bin:/bin"})
+        killpg.assert_not_called()
 
     def test_version_is_public_and_does_not_require_authorization(self):
         result = subprocess.run(
@@ -90,7 +119,7 @@ class AuthorizerTests(unittest.TestCase):
             capture_output=True, text=True, timeout=3, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "omarchy-bridge 2\n")
+        self.assertEqual(result.stdout, "omarchy-bridge 4\n")
 
     def test_guard_metadata_is_unprotected_until_nft_commit_succeeds(self):
         link = SimpleNamespace(
@@ -374,6 +403,22 @@ class AuthorizerTests(unittest.TestCase):
         activate.assert_not_called()
         release.assert_not_called()
 
+    def test_kill_switch_interruption_runs_stop_then_reestablishes_blocked_state(self):
+        (geteuid, environ, getpwuid, lock, guard, namespace, prepare, apply,
+         remove, vendor) = self.authorized()
+        argv = ["--traffic", "--country-code", "DE", "--wireguard", "--kill-switch", "--connect"]
+        with (geteuid, environ, getpwuid, lock, guard, namespace,
+              prepare as install, apply as activate, remove as release,
+              patch.object(adapter, "vendor", side_effect=[InterruptedError("signal"), 0]) as call_vendor):
+            with self.assertRaises(InterruptedError):
+                adapter.main(argv)
+        self.assertEqual([call.args[0] for call in call_vendor.call_args_list],
+                         [[arg for arg in argv if arg != "--kill-switch"], ["--stop"]])
+        install.assert_has_calls([unittest.mock.call(1000),
+                                  unittest.mock.call(1000, blocked=True)])
+        activate.assert_not_called()
+        release.assert_not_called()
+
     def test_guard_script_rejects_injected_marks_and_emits_kill_switch_policy(self):
         for mark in (0, -1, 2**32, "0x2a; accept", True):
             with self.subTest(mark=mark), self.assertRaises(ValueError):
@@ -384,6 +429,36 @@ class AuthorizerTests(unittest.TestCase):
         self.assertIn('oifname "cyberghost" accept', script)
         self.assertIn("meta nfproto { ipv4, ipv6 } reject", script)
         self.assertNotIn("0x2a; accept", script)
+
+    def test_guard_bootstrap_rule_is_resolver_uid_scoped_and_dns_only(self):
+        script = adapter.guard_script(None, False, bootstrap_uid=53)
+        self.assertIn("meta nfproto ipv6 meta skuid 53 meta l4proto { tcp, udp } th dport { 53, 853 } accept", script)
+        self.assertIn("meta nfproto ipv6 reject", script)
+        for uid in (0, -1, 2**32, True, "53"):
+            with self.subTest(uid=uid), self.assertRaises(ValueError):
+                adapter.guard_script(None, False, bootstrap_uid=uid)
+        for mark, kill_switch in ((42, False), (None, True)):
+            with self.subTest(mark=mark, kill_switch=kill_switch), self.assertRaises(ValueError):
+                adapter.guard_script(mark, kill_switch, bootstrap_uid=53)
+
+    def test_only_preparing_guard_looks_up_resolver_uid(self):
+        with patch.object(adapter.pwd, "getpwnam", return_value=Account()) as lookup, \
+             patch.object(adapter, "install_guard") as install:
+            adapter.prepare_guard(1000)
+        lookup.assert_called_once_with("systemd-resolve")
+        self.assertEqual(install.call_args.kwargs["bootstrap_uid"], 53)
+
+        with patch.object(adapter.pwd, "getpwnam", side_effect=AssertionError("blocked guard must not look up resolver")) as lookup, \
+             patch.object(adapter, "install_guard") as install:
+            adapter.prepare_guard(1000, blocked=True)
+        lookup.assert_not_called()
+        self.assertIsNone(install.call_args.kwargs["bootstrap_uid"])
+
+        with patch.object(adapter.pwd, "getpwnam", side_effect=AssertionError("active guard must not look up resolver")) as lookup, \
+             patch.object(adapter, "wireguard_details", return_value=(7, 42)), \
+             patch.object(adapter, "install_guard"):
+            adapter.apply_guard(1000, False)
+        lookup.assert_not_called()
 
     def test_stop_inspection_failure_keeps_protection_metadata(self):
         protection = {"uid": 1000, "device": "cyberghost", "interface_index": 7,
@@ -420,6 +495,87 @@ class AuthorizerTests(unittest.TestCase):
         ])
         install.assert_called_once_with(1000)
         release.assert_not_called()
+
+    def test_failed_wireguard_setup_and_timeout_attempt_bounded_rollback(self):
+        argv = ["--traffic", "--country-code", "DE", "--wireguard", "--connect"]
+        for failure, expected in ((1, 1), (subprocess.TimeoutExpired(adapter.VENDOR, 120), 124)):
+            with self.subTest(failure=type(failure).__name__):
+                (geteuid, environ, getpwuid, lock, guard, namespace, prepare, apply,
+                 remove, vendor) = self.authorized()
+                with (geteuid, environ, getpwuid, lock, guard, namespace,
+                      patch.object(adapter, "guard_exists", return_value=False),
+                      patch.object(adapter, "write_guard"),
+                      patch.object(adapter, "guard_fingerprint", return_value="a" * 64),
+                      patch.object(adapter.subprocess, "run", return_value=SimpleNamespace(returncode=0)),
+                      patch.object(adapter.pwd, "getpwnam", return_value=Account()),
+                      patch.object(adapter, "vendor", side_effect=[failure, 0]) as call_vendor,
+                      patch.object(adapter, "tunnel_absent", return_value=True) as inspect,
+                      patch.object(adapter, "remove_guard") as release):
+                    result = adapter.main(argv)
+                self.assertEqual(result, expected)
+                self.assertEqual([call.args[0] for call in call_vendor.call_args_list],
+                                 [argv, ["--stop"]])
+                inspect.assert_called_once_with()
+                release.assert_called_once_with(1000)
+
+    def test_interrupted_helper_leaves_prepared_guard_for_explicit_recheck(self):
+        link = SimpleNamespace(
+            returncode=0,
+            stdout='[{"ifname":"cyberghost","ifindex":7,"linkinfo":{"info_kind":"wireguard"}}]',
+        )
+        fwmark = SimpleNamespace(returncode=0, stdout="0x2a\n")
+        prepared = {"uid": 1000, "device": "cyberghost", "interface_index": 7,
+                    "mark": 42, "kill_switch": False, "phase": "prepared"}
+        records = []
+        # Model helper death while nft is applying: staged metadata remains available
+        # to a later status/verification request, and no second setup is assumed.
+        with patch.object(adapter, "command", side_effect=[link, fwmark]), \
+             patch.object(adapter, "guard_state", return_value=None), \
+             patch.object(adapter, "guard_exists", return_value=False), \
+             patch.object(adapter, "write_guard", side_effect=lambda record: records.append(dict(record))), \
+             patch.object(adapter.subprocess, "run", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                adapter.apply_guard(1000, False)
+        self.assertEqual(records, [{**prepared, "kill_switch": False}])
+
+    def test_verify_reports_missing_or_reloaded_guard_as_unverified(self):
+        active = {"uid": 1000, "device": "cyberghost", "interface_index": 7,
+                  "mark": 42, "kill_switch": False, "phase": "active",
+                  "fingerprint": "a" * 64}
+        for state, fingerprint in ((active, None), (active, "b" * 64)):
+            with self.subTest(fingerprint=fingerprint):
+                (geteuid, environ, getpwuid, lock, guard, namespace, prepare, apply,
+                 remove, vendor) = self.authorized()
+                output = []
+                with (geteuid, environ, getpwuid, lock,
+                      patch.object(adapter, "guard_state", return_value=state),
+                      patch.object(adapter, "guard_fingerprint", return_value=fingerprint),
+                      patch.object(adapter, "wireguard_details") as tunnel,
+                      patch("builtins.print", side_effect=output.append)):
+                    self.assertEqual(adapter.main(["--verify-protection"]), 0)
+                self.assertEqual(json.loads(output[0]), {"protection_verified": False})
+                tunnel.assert_not_called()
+
+    def test_verify_distinguishes_prepared_and_confirmed_blocked_states(self):
+        for phase, expected in (("prepared", False), ("blocked", True)):
+            with self.subTest(phase=phase):
+                state = {"uid": 1000, "device": "cyberghost", "interface_index": 0,
+                         "mark": 0, "kill_switch": phase == "blocked", "phase": phase,
+                         "fingerprint": "a" * 64}
+                (geteuid, environ, getpwuid, lock, guard, namespace, prepare, apply,
+                 remove, vendor) = self.authorized()
+                output = []
+                with (geteuid, environ, getpwuid, lock,
+                      patch.object(adapter, "guard_state", return_value=state),
+                      patch.object(adapter, "guard_fingerprint", return_value="a" * 64),
+                      patch.object(adapter, "tunnel_absent", return_value=True) as inspect,
+                      patch("builtins.print", side_effect=output.append)):
+                    self.assertEqual(adapter.main(["--verify-protection"]), 0)
+                self.assertEqual(json.loads(output[0]), {"protection_verified": expected})
+                if phase == "prepared":
+                    inspect.assert_not_called()
+                else:
+                    inspect.assert_called_once_with()
 
 
 if __name__ == "__main__":

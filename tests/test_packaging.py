@@ -13,6 +13,28 @@ import xml.etree.ElementTree as ET
 PACKAGE = os.environ.get("CG_TEST_PACKAGE")
 # Hash of the unmodified binary in the PKGBUILD's SHA-pinned vendor archive.
 VENDOR_SHA256 = "038c202a969cf790081af9a7382025c5150b7495b76c63d08a765324e898164a"
+
+
+class RecipeTests(unittest.TestCase):
+    def test_checked_in_recipe_and_text_source_checksums_agree(self):
+        root = Path(__file__).parents[1] / "packaging/cyberghostvpn"
+        recipe = (root / "PKGBUILD").read_text()
+        metadata = (root / ".SRCINFO").read_text()
+        sources = re.findall(r"^\s*source = (.+)$", metadata, re.MULTILINE)
+        checksums = re.findall(r"^\s*sha256sums = ([0-9a-f]{64})$", metadata, re.MULTILINE)
+        self.assertEqual(len(sources), 4)
+        self.assertEqual(len(sources), len(checksums))
+        self.assertEqual(re.findall(r"'([0-9a-f]{64})'", recipe), checksums)
+        self.assertTrue(sources[0].startswith("https://download.cyberghostvpn.com/linux/"))
+        for source, expected in zip(sources[1:], checksums[1:]):
+            self.assertEqual(Path(source).name, source)
+            self.assertEqual(hashlib.sha256((root / source).read_bytes()).hexdigest(), expected)
+        for name in ("pkgname", "pkgver", "pkgrel"):
+            value = re.search(r"^" + name + r"=([A-Za-z0-9.-]+)$", recipe, re.MULTILINE)
+            self.assertIsNotNone(value)
+            self.assertRegex(metadata, r"(?m)^\s*" + name + " = " + re.escape(value[1]) + "$" )
+
+
 @unittest.skipUnless(PACKAGE, "set CG_TEST_PACKAGE to a locally built CyberGhost package")
 class PackageTests(unittest.TestCase):
     @classmethod
