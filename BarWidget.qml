@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import QtQuick.Shapes
 import Quickshell.Io
 import qs.Commons
 import qs.Ui as Ui
@@ -39,6 +40,9 @@ Ui.BarWidget {
   readonly property bool busy: awaiting && (pending === "connect" || pending === "switch" || pending === "disconnect" || pending === "release-protection")
   readonly property bool working: awaiting
   readonly property bool dynamicMode: backendMode === "official-cli"
+  readonly property bool transitioning: busy || snapshot.state === "connecting" || snapshot.state === "disconnecting"
+  readonly property bool needsAttention: message.length > 0
+    || ["blocked", "recovery-required", "waiting-network"].indexOf(snapshot.state) >= 0
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
   readonly property string runner: decodeURIComponent(String(Qt.resolvedUrl("cg_bridge.py")).replace(/^file:\/\//, ""))
@@ -392,15 +396,22 @@ Ui.BarWidget {
     tooltipText: "CyberGhost VPN · " + root.stateText
     Accessible.name: button.tooltipText
     iconComponent: Component {
-      Text {
-        textFormat: Text.PlainText
-        text: "CG"
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        font.bold: true
-        font.pixelSize: Style.font.bodySmall
-        font.family: Style.font.family
-        color: root.busy ? Color.accent : root.snapshot.state === "connected" ? (button.foreground.r + button.foreground.g + button.foreground.b < 1.5 ? "#866200" : "#ffcf36") : button.foreground
+      Shape {
+        anchors.centerIn: parent
+        anchors.verticalCenterOffset: -Style.space(1)
+        width: 20
+        height: 20
+        scale: Math.min(parent.width, parent.height) / 20 * 0.8
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+          strokeWidth: 0
+          fillRule: ShapePath.OddEvenFill
+          fillColor: root.transitioning ? Color.accent : root.needsAttention ? Color.urgent
+            : root.snapshot.state === "connected" ? (button.foreground.r + button.foreground.g + button.foreground.b < 1.5 ? "#866200" : "#ffcf36") : button.foreground
+          PathSvg {
+            path: "M3 17.5V8.5a7 7 0 0 1 14 0v9q0 1.6-1.4.5L13 16.5l-2 2q-1 1-2 0l-2-2-2.6 2Q3 19.1 3 17.5Z M8.6 9.5a1.1 1.6 0 1 1-2.2 0a1.1 1.6 0 1 1 2.2 0Z M13.6 9.5a1.1 1.6 0 1 1-2.2 0a1.1 1.6 0 1 1 2.2 0Z"
+          }
+        }
       }
     }
     onPressed: function(code) { if (code === Qt.LeftButton) root.toggle() }
@@ -408,10 +419,15 @@ Ui.BarWidget {
   Rectangle {
     width: Style.space(4)
     height: width
-    radius: width / 2
+    radius: root.needsAttention && !root.transitioning ? 0 : width / 2
+    rotation: root.needsAttention && !root.transitioning ? 45 : 0
     anchors.right: parent.right
     anchors.bottom: parent.bottom
-    color: root.busy ? Color.accent : root.message ? Color.urgent
+    anchors.rightMargin: Style.space(1)
+    anchors.bottomMargin: Style.space(1)
+    color: root.transitioning ? "transparent" : root.needsAttention ? Color.urgent
       : root.snapshot.state === "connected" ? button.foreground : "transparent"
+    border.width: root.transitioning ? 1 : 0
+    border.color: Color.accent
   }
 }

@@ -16,7 +16,11 @@ omarchy plugin add https://github.com/peteVo/cyberghost-omarchy-plugin.git --ena
 
 This installs the panel, not the CyberGhost CLI. Dynamic locations require the **reviewed compatibility package below**, an existing CyberGhost subscription and official local account setup. The unmodified AUR package does not supply this plugin's reviewed privileged adapter. Do not use it as a substitute for that package.
 
-Click **CG** in the bar. The panel provides searchable countries/cities/servers, automatic server selection, favorites, connection details, optional public IPv4 lookup, switching, diagnostics and an optional WireGuard kill switch. Tab navigates native controls; Escape closes. Preferences and favorites persist through Omarchy's bar-widget state API. New entries default to **Official CLI / WireGuard**. No second Quickshell process is started.
+Click the **ghost icon** in the bar. The panel provides searchable countries/cities/servers, automatic server selection, favorites, connection details, optional public IPv4 lookup, switching, diagnostics and an optional WireGuard kill switch. Tab navigates native controls; Escape closes. Preferences and favorites persist through Omarchy's bar-widget state API. New entries default to **Official CLI / WireGuard**. No second Quickshell process is started.
+
+The toolbar uses a native vector ghost: theme foreground while disconnected, yellow while connected, and theme accent with an outlined badge during transitions. Errors, waiting-network and recovery states use an alert diamond. The tooltip names the reported state; the icon does not verify traffic protection.
+
+For an independent installation test of the published 0.5 baseline, follow [TESTING.md](TESTING.md), which pins the exact release commit and matching package. The icon follow-up is separate from that release; no fresh VM result is claimed.
 
 Requirements: Omarchy 4 / Quickshell, Python 3 and NetworkManager. Official-CLI mode also needs the reviewed package and local account setup. The optional fallback needs NetworkManager's OpenVPN plugin and a valid configured OpenVPN profile. Authentication stays with NetworkManager's secret agent or the official client. The plugin never imports, edits or deletes VPN profiles.
 
@@ -51,7 +55,7 @@ For a fresh official-CLI setup, complete these steps in order:
 
 1. Build and review the local package below, then install the package and its dependencies from your own terminal. Stop if the transaction proposes removals or unexpected core upgrades.
 2. Complete account/device setup through the official client in your own terminal: `sudo cyberghostvpn --setup`. Enter credentials only in that client flow.
-3. Open **CG** and choose **Settings → Official CLI** and **Locations → WireGuard**. These settings persist through Omarchy's existing bar-widget API. The NetworkManager profile backend remains available for a valid OpenVPN profile.
+3. Open the **ghost icon** and choose **Settings → Official CLI** and **Locations → WireGuard**. These settings persist through Omarchy's existing bar-widget API. The NetworkManager profile backend remains available for a valid OpenVPN profile.
 
 Installing the CLI alone does not change the selected backend. To set the same choices directly with Omarchy's native bar-widget API:
 
@@ -135,7 +139,7 @@ ln -s /usr/share/omarchy/shell "$CG_QML_IMPORTS/qs"
 /usr/lib/qt6/bin/qmllint -I "$CG_QML_IMPORTS" -I /usr/lib/qt6/qml BarWidget.qml Panel.qml
 ```
 
-The final Qt6 lint exited 0 with 47 dynamic-property warnings and eight JavaScript declaration-style warnings; no syntax/import errors were reported. Check each warning; lint does not establish that the panel loads or renders correctly.
+The final Qt6 lint exited 0 with 45 dynamic-property warnings and eight JavaScript declaration-style warnings; no syntax/import errors were reported. Check each warning; lint does not establish that the panel loads or renders correctly.
 
 `bash tools/host-baseline.sh` takes a read-only network snapshot without making an external IP request. Keep its output local: it contains personal network details. Live tests use tunnel/route/DNS evidence and explicit opt-in public-IP checks. Do not include local/public IPs or DNS configuration in shared notes. A bidirectional handoff between the saved Wi-Fi and trusted hotspot passed with the same WireGuard tunnel and successful bound IPv4 after each change. A native suspend/resume check slept for 16 seconds, woke automatically, retained the tunnel and recovered bound IPv4; its kernel protection check passed. Cleanup disconnected and released the guard.
 
