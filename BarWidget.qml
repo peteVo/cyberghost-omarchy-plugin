@@ -25,6 +25,7 @@ Ui.BarWidget {
   property var favoriteToApply: null
   property string publicIp: ""
   property string protectionCheck: ""
+  property string diagnosticReport: ""
   property string message: ""
   property string pending: ""
   property string pendingCountry: ""
@@ -35,10 +36,16 @@ Ui.BarWidget {
   property bool awaiting: false
   property int helperExit: -1
   property bool hasVendor: false
+  property bool setupReady: false
+  property var setupChecks: []
+  property string setupMessage: ""
   property bool killSwitch: setting("killSwitch", false) === true
   readonly property bool busy: awaiting && (pending === "connect" || pending === "switch" || pending === "disconnect" || pending === "release-protection")
   readonly property bool working: awaiting
   readonly property bool dynamicMode: backendMode === "official-cli"
+  readonly property bool transitioning: busy || snapshot.state === "connecting" || snapshot.state === "disconnecting"
+  readonly property bool needsAttention: message.length > 0
+    || ["blocked", "recovery-required", "waiting-network"].indexOf(snapshot.state) >= 0
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
   readonly property string runner: decodeURIComponent(String(Qt.resolvedUrl("cg_bridge.py")).replace(/^file:\/\//, ""))
@@ -92,6 +99,10 @@ Ui.BarWidget {
   function selectBackend(value) {
     if (working || value === backendMode) return
     backendMode = value
+    setupReady = false
+    setupChecks = []
+    setupMessage = "Checking local setup…"
+    diagnosticReport = ""
     persistSettings({ backend: value })
     selectedCountry = ""
     resetLocations()
@@ -226,6 +237,43 @@ Ui.BarWidget {
       data = JSON.parse(output.text)
       if (!data || typeof data !== "object" || Array.isArray(data) || typeof data.ok !== "boolean")
         throw new Error("Invalid response object")
+      if (data.ok && (task === "countries" || task === "cities" || task === "servers")) {
+        if (!Array.isArray(data.items)) throw new Error("Invalid location list")
+        if (data.items.some(function(item) {
+          return task === "cities" ? typeof item !== "string"
+            : !item || typeof item !== "object" || typeof item.name !== "string"
+              || (task === "countries" && typeof item.code !== "string")
+        })) throw new Error("Invalid location entry")
+      }
+      if (data.ok && task === "check" && (!Array.isArray(data.prerequisites)
+          || typeof data.setup_ready !== "boolean"
+          || data.prerequisites.some(function(item) {
+            return !item || typeof item !== "object" || typeof item.ready !== "boolean"
+              || typeof item.label !== "string" || typeof item.message !== "string"
+          }))) throw new Error("Invalid setup checks")
+      if (data.ok && ["check", "status", "connect", "switch", "disconnect", "release-protection"].indexOf(task) >= 0
+          && (["unknown", "connected", "disconnected", "connecting", "disconnecting", "waiting-network", "blocked", "recovery-required"].indexOf(data.state) < 0
+              || typeof data.can_connect !== "boolean" || typeof data.can_disconnect !== "boolean"))
+        throw new Error("Invalid connection state")
+      if (data.ok && task === "ip" && (typeof data.ip !== "string" || !data.ip.length))
+        throw new Error("Invalid IP result")
+      if (data.ok && task === "diagnostics" && (!data.report || typeof data.report !== "object"
+          || Array.isArray(data.report) || data.report.schema !== 1 || typeof data.report.plugin_version !== "string"
+          || (data.report.plugin_version !== "unknown" && !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(data.report.plugin_version))
+          || typeof data.report.python_version !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(data.report.python_version)
+          || ["linux", "unsupported"].indexOf(data.report.platform) < 0 || data.report.backend !== backendMode
+          || Object.keys(data.report).some(function(key) { return ["schema", "plugin_version", "python_version", "platform", "backend", "packages", "prerequisites"].indexOf(key) < 0 })
+          || !Array.isArray(data.report.prerequisites) || data.report.prerequisites.some(function(item) {
+            return !item || typeof item.ready !== "boolean"
+              || ["python", "architecture", "tools", "NetworkManager", "systemd-resolved", "resolvconf", "adapter", "resolver"].indexOf(item.id) < 0
+              || Object.keys(item).some(function(key) { return key !== "id" && key !== "ready" })
+          }) || !data.report.packages || typeof data.report.packages !== "object" || Array.isArray(data.report.packages)
+          || Object.keys(data.report.packages).some(function(key) {
+            const value = data.report.packages[key]
+            return ["omarchy", "quickshell", "networkmanager", "systemd", "cyberghostvpn-omarchy", "cyberghostvpn"].indexOf(key) < 0
+              || (value !== null && (typeof value !== "string" || !/^[0-9][A-Za-z0-9.+_:~\-]{0,63}$/.test(value)))
+          })))
+        throw new Error("Invalid diagnostic report")
     } catch (e) {
       data = { ok: false, error: "Cannot read the VPN helper response. Refresh, then check Python and the plugin installation." }
     }
@@ -242,12 +290,15 @@ Ui.BarWidget {
       if (task === "countries") discovery = ({ items: [], reason: message })
       else if (task === "cities") cities = ({ items: [], reason: message })
       else if (task === "servers") servers = ({ items: [], reason: message })
-      else if (task !== "ip" || data.code === "disconnected" || data.code === "unconfirmed") {
+      else if (task !== "diagnostics" && (task !== "ip" || data.code === "disconnected" || data.code === "unconfirmed")) {
         snapshot = ({ backend: backendMode, state: "unknown", can_connect: false, can_disconnect: false })
         publicIp = ""
       }
       if (task === "countries" || task === "cities" || task === "servers") favoriteToApply = null
       if (task === "countries" || task === "cities") protocolRefresh = false
+      if (task === "check") { setupReady = false; setupMessage = message }
+      if (task === "diagnostics") diagnosticReport = ""
+      if (panelLoader.item) panelLoader.item.revealMessage()
       return
     }
     if (task === "countries") {
@@ -321,7 +372,11 @@ Ui.BarWidget {
         selectedServer = favoriteToApply.server || ""
         favoriteToApply = null
       } else if (selectedServer && !data.items.some(function(item) { return item.name === selectedServer })) selectedServer = ""
-    } else if (task === "ip") publicIp = data.ip || ""
+    } else if (task === "diagnostics") {
+      diagnosticReport = JSON.stringify(data.report, null, 2)
+      if (panelLoader.item) panelLoader.item.revealReport()
+    }
+    else if (task === "ip") publicIp = data.ip || ""
     else if (task === "verify-protection") {
       protectionCheck = data.protection_verified === true ? "Last check: rules and tunnel matched."
         : "Last check failed. Disconnect and reconnect before relying on protection."
@@ -334,8 +389,12 @@ Ui.BarWidget {
       }
       snapshot = data
       message = data.error || data.warning || ""
+      if (message && panelLoader.item) panelLoader.item.revealMessage()
       if (task === "check") {
         hasVendor = data.has_vendor === true
+        setupReady = data.setup_ready === true
+        setupChecks = arrayFrom(data.prerequisites)
+        setupMessage = String(data.setup_message || "")
         if (dynamicMode && opened && !discovery.items.length)
           Qt.callLater(function() { root.invoke("countries") })
       }
@@ -351,6 +410,7 @@ Ui.BarWidget {
         focused: panelLoader.item ? panelLoader.item.panelFocused === true : false,
         focusControl: panelLoader.item ? panelLoader.item.focusControl : "",
         focusRect: panelLoader.item ? panelLoader.item.focusRect : null,
+        panelRect: panelLoader.item ? panelLoader.item.panelBounds() : null,
         search: panelLoader.item ? panelLoader.item.searchPlaceholder : "",
         section: panelLoader.item ? panelLoader.item.section : "",
         working: root.working, pending: root.pending, state: root.snapshot.state,
@@ -358,6 +418,9 @@ Ui.BarWidget {
         protocol: root.selectedProtocol, server: root.selectedServer,
         killSwitch: root.killSwitch, configuredKillSwitch: root.snapshot.kill_switch === true,
         ipv6Guard: root.snapshot.ipv6_guard === true,
+        setupReady: root.setupReady, setupChecks: root.setupChecks.length,
+        reportReady: root.diagnosticReport.length > 0,
+        reportSelected: panelLoader.item ? panelLoader.item.reportSelected : false,
         favorites: root.favorites.length, hasIp: root.publicIp.length > 0, message: root.message })
     }
   }
@@ -392,15 +455,11 @@ Ui.BarWidget {
     tooltipText: "CyberGhost VPN · " + root.stateText
     Accessible.name: button.tooltipText
     iconComponent: Component {
-      Text {
-        textFormat: Text.PlainText
-        text: "CG"
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        font.bold: true
-        font.pixelSize: Style.font.bodySmall
-        font.family: Style.font.family
-        color: root.busy ? Color.accent : root.snapshot.state === "connected" ? (button.foreground.r + button.foreground.g + button.foreground.b < 1.5 ? "#866200" : "#ffcf36") : button.foreground
+      GhostIcon {
+        anchors.centerIn: parent
+        opticalScale: 0.8
+        color: root.transitioning ? Color.accent : root.needsAttention ? Color.urgent
+          : root.snapshot.state === "connected" ? (button.foreground.r + button.foreground.g + button.foreground.b < 1.5 ? "#866200" : "#ffcf36") : button.foreground
       }
     }
     onPressed: function(code) { if (code === Qt.LeftButton) root.toggle() }
@@ -408,10 +467,15 @@ Ui.BarWidget {
   Rectangle {
     width: Style.space(4)
     height: width
-    radius: width / 2
+    radius: root.needsAttention && !root.transitioning ? 0 : width / 2
+    rotation: root.needsAttention && !root.transitioning ? 45 : 0
     anchors.right: parent.right
     anchors.bottom: parent.bottom
-    color: root.busy ? Color.accent : root.message ? Color.urgent
+    anchors.rightMargin: Style.space(1)
+    anchors.bottomMargin: Style.space(1)
+    color: root.transitioning ? "transparent" : root.needsAttention ? Color.urgent
       : root.snapshot.state === "connected" ? button.foreground : "transparent"
+    border.width: root.transitioning ? 1 : 0
+    border.color: Color.accent
   }
 }

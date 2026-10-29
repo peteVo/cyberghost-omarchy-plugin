@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Check manifest and entry points
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(Path("manifest.json").read_text())
+          assert manifest["schemaVersion"] == 1
+          assert manifest["id"] and manifest["version"]
+          assert Path(manifest["entryPoints"]["barWidget"]).is_file()
+          PY
+      - name: Run credential-free checks
+        run: |
+          # Package integration tests skip unless CG_TEST_PACKAGE points to a local package artifact.
+          python -m unittest discover -s tests -v
+          python -m py_compile cg_bridge.py packaging/cyberghostvpn/omarchy-bridge
+          bash -n tools/host-baseline.sh tools/build-client.sh

@@ -23,6 +23,8 @@ V4_LOCAL, V4_SERVER = "198.18.0.1", "198.18.0.2"
 V6_LOCAL, V6_SERVER = "2001:db8:77::1", "2001:db8:77::2"
 MARK = 51820
 PORT = 43789
+DNS_PORT = 53
+RESOLVER_UID = 65534
 NETNS_FLAG = getattr(os, "CLONE_NEWNET", 0x40000000)
 COMMAND_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}
 
@@ -75,12 +77,14 @@ def listen_server(control):
         set_link(PEER, f"{V4_SERVER}/30", 4)
         set_link(PEER, f"{V6_SERVER}/64", 6)
         servers = []
-        for family, address in ((socket.AF_INET, V4_SERVER), (socket.AF_INET6, V6_SERVER)):
+        for family, address, port in ((socket.AF_INET, V4_SERVER, PORT),
+                                      (socket.AF_INET6, V6_SERVER, PORT),
+                                      (socket.AF_INET6, V6_SERVER, DNS_PORT)):
             server = socket.socket(family, socket.SOCK_STREAM)
             if family == socket.AF_INET6:
                 server.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server.bind((address, PORT))
+            server.bind((address, port))
             server.listen(16)
             server.settimeout(0.2)
             servers.append(server)
@@ -101,18 +105,48 @@ def listen_server(control):
             pass
 
 
-def probe(family, address, marked=False):
+def probe(family, address, marked=False, port=PORT):
     sock = socket.socket(family, socket.SOCK_STREAM)
     sock.settimeout(0.7)
     try:
         if marked:
             sock.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_MARK", 36), MARK)
-        sock.connect((address, PORT))
+        sock.connect((address, port))
         return True
     except OSError:
         return False
     finally:
         sock.close()
+
+
+def probe_as_uid(uid, family, address, port):
+    parent, child = socket.socketpair()
+    pid = os.fork()
+    if pid == 0:
+        parent.close()
+        try:
+            os.setgroups([])
+            os.setgid(uid)
+            os.setuid(uid)
+            child.sendall(b"1" if probe(family, address, port=port) else b"0")
+        except Exception:
+            try:
+                child.sendall(b"e")
+            except OSError:
+                pass
+        finally:
+            child.close()
+            os._exit(0)
+    child.close()
+    try:
+        parent.settimeout(3)
+        result = parent.recv(1)
+    finally:
+        parent.close()
+        cleanup_child(pid)
+    if result not in (b"0", b"1"):
+        raise RuntimeError(f"unprivileged UID {uid} probe did not complete")
+    return result == b"1"
 
 
 def expect(label, observed, expected):
@@ -192,13 +226,25 @@ def main():
 
         expect("unguarded IPv4", probe(socket.AF_INET, V4_SERVER), True)
         expect("unguarded IPv6", probe(socket.AF_INET6, V6_SERVER), True)
+        expect("unguarded IPv6 DNS TCP", probe(socket.AF_INET6, V6_SERVER, port=DNS_PORT), True)
 
         run(["/usr/bin/nft", "-f", "-"], input_text=f"table inet {OTHER_TABLE} {{}}\n")
         nft_other = True
-        run(["/usr/bin/nft", "-f", "-"], input_text=guard_script(MARK, True))
+        run(["/usr/bin/nft", "-f", "-"],
+            input_text=guard_script(None, False, bootstrap_uid=RESOLVER_UID))
         nft_guard = True
+        expect("bootstrap resolver UID IPv6 DNS TCP",
+               probe_as_uid(RESOLVER_UID, socket.AF_INET6, V6_SERVER, DNS_PORT), True)
+        expect("root IPv6 DNS TCP during bootstrap",
+               probe(socket.AF_INET6, V6_SERVER, port=DNS_PORT), False)
+        expect("bootstrap resolver UID non-DNS TCP",
+               probe_as_uid(RESOLVER_UID, socket.AF_INET6, V6_SERVER, PORT), False)
+
+        run(["/usr/bin/nft", "-f", "-"], input_text=guard_script(MARK, True, replace=True))
         expect("full guard unmarked IPv4", probe(socket.AF_INET, V4_SERVER), False)
         expect("full guard unmarked IPv6", probe(socket.AF_INET6, V6_SERVER), False)
+        expect("full guard bootstrap UID IPv6 DNS TCP",
+               probe_as_uid(RESOLVER_UID, socket.AF_INET6, V6_SERVER, DNS_PORT), False)
         expect("full guard marked IPv4", probe(socket.AF_INET, V4_SERVER, True), True)
         expect("full guard marked IPv6", probe(socket.AF_INET6, V6_SERVER, True), True)
 

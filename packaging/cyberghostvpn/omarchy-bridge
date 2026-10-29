@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -105,18 +106,25 @@ def guard_exists():
     raise RuntimeError("Cannot inspect traffic protection")
 
 
-def guard_script(mark, kill_switch, replace=False):
+def guard_script(mark, kill_switch, replace=False, *, bootstrap_uid=None):
     if ((mark is not None and (type(mark) is not int or not 0 < mark < 2**32))
-            or type(kill_switch) is not bool):
+            or type(kill_switch) is not bool
+            or (bootstrap_uid is not None and (type(bootstrap_uid) is not int
+                or not 0 < bootstrap_uid < 2**32 or mark is not None or kill_switch))):
         raise ValueError
     prefix = f"delete table inet {TABLE}\n" if replace else ""
     blocked = "meta nfproto { ipv4, ipv6 }" if kill_switch else "meta nfproto ipv6"
     transport = f"meta mark {mark} accept" if mark is not None else ""
+    # Only the native resolver may use IPv6 DNS while the client bootstraps.
+    # Connected and blocked guards are installed without this exception.
+    bootstrap = (f"meta nfproto ipv6 meta skuid {bootstrap_uid} meta l4proto {{ tcp, udp }} "
+                 "th dport { 53, 853 } accept") if bootstrap_uid is not None else ""
     return prefix + f'''table inet {TABLE} {{
   chain output {{
     type filter hook output priority -10; policy accept;
     oifname "lo" accept
     {transport}
+    {bootstrap}
     oifname "cyberghost" accept
     meta nfproto ipv6 icmpv6 type {{ 133, 135, 136 }} ip6 hoplimit 255 accept
     meta nfproto ipv6 icmpv6 type {{ 131, 132, 143 }} ip6 daddr ff02::/16 accept
@@ -149,12 +157,12 @@ def guard_fingerprint():
     return hashlib.sha256(json.dumps(rules, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def install_guard(value, mark, kill_switch, phase):
+def install_guard(value, mark, kill_switch, phase, *, bootstrap_uid=None):
     previous = guard_state()
     exists = guard_exists()
     if (exists and previous is None) or (previous and previous["uid"] != value["uid"]):
         raise ValueError
-    script = guard_script(mark, kill_switch, exists)
+    script = guard_script(mark, kill_switch, exists, bootstrap_uid=bootstrap_uid)
     value = {**value, "phase": "prepared", "kill_switch": False}
     write_guard(value)
     result = subprocess.run(["/usr/bin/nft", "--file", "-"], input=script, capture_output=True,
@@ -172,7 +180,8 @@ def install_guard(value, mark, kill_switch, phase):
 def prepare_guard(uid, blocked=False):
     value = {"uid": uid, "device": "cyberghost", "interface_index": 0,
              "mark": 0, "kill_switch": blocked}
-    install_guard(value, None, blocked, "blocked" if blocked else "prepared")
+    resolver_uid = None if blocked else pwd.getpwnam("systemd-resolve").pw_uid
+    install_guard(value, None, blocked, "blocked" if blocked else "prepared", bootstrap_uid=resolver_uid)
 
 
 def wireguard_details():
@@ -210,8 +219,24 @@ def remove_guard(uid):
 
 
 def vendor(argv, environment):
-    return subprocess.run([VENDOR, *argv], env=environment, stdin=subprocess.DEVNULL,
-                          close_fds=True, timeout=45 if argv == ["--stop"] else 120, check=False).returncode
+    process = subprocess.Popen([VENDOR, *argv], env=environment, stdin=subprocess.DEVNULL,
+                               close_fds=True, start_new_session=True, umask=0o077)
+    try:
+        return process.wait(timeout=45 if argv == ["--stop"] else 120)
+    except BaseException:
+        # Stop this invocation's group before rollback can race a late startup.
+        # Descendants that deliberately detach can still escape this group.
+        if process.returncode is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.wait(timeout=3)
+        raise
+
+
+def interrupted(_signum, _frame):
+    raise InterruptedError("VPN operation interrupted")
 
 
 def tunnel_absent():
@@ -277,8 +302,7 @@ def main(argv):
                 print(json.dumps({"protection_verified": verified}))
                 return 0
             wireguard = "--wireguard" in argv
-            if wireguard or protection:
-                ipv6_namespace()
+            ipv6_namespace()
             if argv == ["--stop"]:
                 result = vendor(argv, environment)
                 if protection:
@@ -291,16 +315,16 @@ def main(argv):
                 return 75
             kill_switch = "--kill-switch" in argv
             vendor_args = [arg for arg in argv if arg != "--kill-switch"]
-            if wireguard:
-                prepare_guard(uid)
             try:
+                if wireguard:
+                    prepare_guard(uid)
                 result = vendor(vendor_args, environment)
                 if result == 0 and wireguard:
                     apply_guard(uid, kill_switch)
                 elif result and wireguard:
                     rollback(uid, kill_switch, environment)
                 return result
-            except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired):
+            except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
                 # Keep the root lock while attempting rollback of a partial start.
                 if wireguard:
                     rollback(uid, kill_switch, environment)
@@ -315,10 +339,15 @@ def main(argv):
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--version"]:
-        print("omarchy-bridge 2")
+        print("omarchy-bridge 4")
         sys.exit(0)
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
     try:
         sys.exit(main(sys.argv[1:]))
+    except (KeyboardInterrupt, InterruptedError):
+        print("CyberGhost operation interrupted; refresh connection status.", file=sys.stderr)
+        sys.exit(130)
     except (ValueError, KeyError, OSError, RuntimeError):
         print("CyberGhost authorization adapter refused the request.", file=sys.stderr)
         sys.exit(1)

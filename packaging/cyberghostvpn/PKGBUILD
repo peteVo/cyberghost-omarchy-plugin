@@ -1,13 +1,15 @@
 # Local Omarchy/systemd-resolved variant of the reviewed AUR 1.5.0-1 recipe.
 # Never runs the vendor installer, setup, uninstaller or completion generator.
-pkgname=cyberghostvpn
+pkgname=cyberghostvpn-omarchy
 pkgver=1.5.0
-pkgrel=5
-pkgdesc='CyberGhost CLI, packaged for systemd-resolved (unverified on Arch)'
+pkgrel=8
+pkgdesc='CyberGhost CLI for systemd-resolved (experimental Arch integration)'
 arch=(x86_64)
 url='https://www.cyberghostvpn.com'
 license=(custom)
-depends=(bash curl glibc zlib python openvpn wireguard-tools systemd-resolvconf util-linux nftables)
+provides=("cyberghostvpn=${pkgver}")
+conflicts=(cyberghostvpn)
+depends=(bash curl glibc zlib 'python>=3.12' openvpn wireguard-tools systemd-resolvconf util-linux nftables iproute2 polkit)
 makedepends=(patch)
 # The PyInstaller payload is appended to the ELF; preserve the vendor binary.
 options=('!strip' '!debug')
@@ -15,7 +17,7 @@ _archive="cyberghostvpn-ubuntu-22.04-${pkgver}"
 source=("https://download.cyberghostvpn.com/linux/${_archive}.zip" 'resolved-only.patch' 'omarchy-bridge' 'org.petevo.cyberghost.policy')
 sha256sums=('c7cfd8e685f497ecc957636913bc32f8fa55b6ac0bbf19b2a4ebe64d188d03a6'
             'aec59065a5f61d8a18e0ab96a66444a5f5e1d7e5a08c2bc8d812315ac5d6becb'
-            '7320dc0ff60a715396e1f15c7eb567bd2230aa8580a50f04d9ccc6dc723cfd33'
+            '31e5c484b017794c9301f100357a97d3432e7e81de526887865059e5f620b986'
             '7b393bfd37f5626e6cbf34b4d427d1dd8ec70621038447521b289a3ba29529a4')
 
 prepare() {

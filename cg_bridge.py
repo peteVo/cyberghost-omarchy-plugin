@@ -7,6 +7,7 @@ import ipaddress
 import json
 import math
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -91,10 +92,10 @@ def privileged_command(vendor, *, require_api=True):
         raise BridgeError("GUI authorization requires the reviewed CyberGhost compatibility package. Install it or select a valid OpenVPN profile in Settings.", "dependency")
     if require_api:
         try:
-            if run([launcher, "--version"], timeout=3).strip() != "omarchy-bridge 2":
+            if run([launcher, "--version"], timeout=3).strip() != "omarchy-bridge 4":
                 raise ValueError
         except (BridgeError, ValueError) as exc:
-            raise BridgeError("Update the reviewed CyberGhost compatibility package to 1.5.0-5 or later before changing connections.", "dependency") from exc
+            raise BridgeError("Install the reviewed cyberghostvpn-omarchy package with helper API 4 (legacy cyberghostvpn 1.5.0-7 also works) before changing connections.", "dependency") from exc
     return ["/usr/bin/pkexec", launcher]
 
 
@@ -103,6 +104,81 @@ def vendor_binary():
     if not path:
         raise BridgeError("A trusted system CyberGhost CLI is not installed. Install the reviewed package or select a valid OpenVPN profile in Settings.", "dependency")
     return path
+
+
+def prerequisites(backend):
+    """Local checks only: no authentication, account files or external requests."""
+    checks = [{"id": "python", "label": "Python 3.12 or newer",
+               "ready": sys.version_info >= (3, 12),
+               "message": "Update Python through the normal Arch system update."}]
+    if backend == "official-cli":
+        checks.append({"id": "architecture", "label": "x86-64 Linux client",
+                       "ready": sys.platform == "linux" and platform.machine() == "x86_64",
+                       "message": "The reviewed vendor executable supports x86-64 Linux only."})
+    tools = ["nmcli"]
+    if backend == "official-cli":
+        tools += ["ip", "busctl", "curl", "pkexec", "wg", "wg-quick", "nft", "mount", "resolvectl", "openvpn"]
+    missing = [name for name in tools if not safe_system_binary("/usr/bin/" + name)]
+    checks.append({"id": "tools", "label": "Required system tools", "ready": not missing,
+                   "message": "Missing tools: " + ", ".join(missing) if missing else "Available."})
+    services = ["NetworkManager"] + (["systemd-resolved"] if backend == "official-cli" else [])
+    for service in services:
+        try:
+            active = run(["/usr/bin/systemctl", "is-active", service], timeout=4).strip() == "active"
+        except BridgeError:
+            active = False
+        checks.append({"id": service, "label": service, "ready": active,
+                       "message": "Check this service locally; the plugin does not start or change system services."})
+    if backend == "official-cli":
+        try:
+            compat = bool(safe_system_binary("/usr/bin/resolvectl")) and (
+                Path("/usr/bin/resolvconf").resolve(strict=True) == Path("/usr/bin/resolvectl").resolve(strict=True))
+        except (OSError, RuntimeError):
+            compat = False
+        checks.append({"id": "resolvconf", "label": "systemd-resolvconf compatibility", "ready": compat,
+                       "message": "Install systemd-resolvconf for WireGuard DNS. Other resolvconf implementations are not supported; review conflicts locally."})
+        try:
+            privileged_command(vendor_binary())
+            adapter_ready, detail = True, "Reviewed adapter available. Account authentication is checked when connecting."
+        except BridgeError as exc:
+            adapter_ready, detail = False, str(exc)
+        checks.append({"id": "adapter", "label": "Reviewed CyberGhost client and adapter",
+                       "ready": adapter_ready, "message": detail})
+        try:
+            stub = Path("/etc/resolv.conf").resolve(strict=True) == Path("/run/systemd/resolve/stub-resolv.conf")
+        except (OSError, RuntimeError):
+            stub = False
+        checks.append({"id": "resolver", "label": "systemd-resolved stub integration", "ready": stub,
+                       "message": "Use the documented resolved setup; the plugin does not replace /etc/resolv.conf."})
+    return checks
+
+
+def diagnostics(backend):
+    """Shareable allowlist: no vendor execution, account files or network requests."""
+    if backend not in BACKENDS:
+        raise ValueError("Select a supported backend")
+    version = "unknown"
+    try:
+        value = json.loads(Path(__file__).with_name("manifest.json").read_text()).get("version")
+        if isinstance(value, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", value) and len(value) <= 64:
+            version = value
+    except (OSError, ValueError, AttributeError):
+        pass
+    packages = {}
+    for name in ("omarchy", "quickshell", "networkmanager", "systemd", "cyberghostvpn-omarchy", "cyberghostvpn"):
+        packages[name] = None
+        try:
+            value = run(["/usr/bin/pacman", "-Q", name], timeout=3).strip()
+        except BridgeError:
+            continue
+        match = re.fullmatch(re.escape(name) + r" ([0-9][A-Za-z0-9.+_:~\-]{0,63})", value)
+        if match:
+            packages[name] = match[1]
+    return {"schema": 1, "plugin_version": version,
+            "python_version": ".".join(str(n) for n in sys.version_info[:3]),
+            "platform": "linux" if sys.platform == "linux" else "unsupported",
+            "backend": backend, "packages": packages,
+            "prerequisites": [{"id": item["id"], "ready": item["ready"]} for item in prerequisites(backend)]}
 
 
 def parse_countries(output):
@@ -351,6 +427,7 @@ def status(profile, backend="manual-profile"):
             if protection["uid"] != os.getuid():
                 raise BridgeError("Another user's VPN traffic protection is active.", "conflict")
             result["can_release_protection"] = True
+            result["protection_phase"] = protection["phase"]
             if backend != "official-cli":
                 raise BridgeError("Official CLI traffic protection is active. Select Official CLI to recover or release its traffic block in Settings.", "conflict")
         if backend == "manual-profile":
@@ -383,14 +460,19 @@ def status(profile, backend="manual-profile"):
                 if protection:
                     if protection["phase"] == "active" and protection["interface_index"] == result.get("interface_index"):
                         result.update(ipv6_guard=True, kill_switch=protection["kill_switch"])
+                        if result["state"] == "unknown":
+                            result.update(state="recovery-required",
+                                          error="The tunnel has no usable internet route. Disconnect and reconnect, or choose another location.")
                     else:
-                        result.update(state="blocked" if protection["phase"] == "blocked" else "unknown",
+                        result.update(state="blocked" if protection["phase"] == "blocked" else "recovery-required",
                                       kill_switch=protection["phase"] == "blocked",
                                       ipv6_guard=protection["phase"] == "blocked",
                                       error="Traffic protection needs recovery. Disconnect or release the block in Settings.",
                                       can_connect=False, can_disconnect=True)
-                if result["state"] == "connected" and not uplink_ready():
+                if (result["state"] == "connected" or (result["state"] == "recovery-required"
+                        and result.get("ipv6_guard") and protection and protection["phase"] == "active")) and not uplink_ready():
                     result.update(state="waiting-network", warning="Waiting for an upstream network. WireGuard can retry when it returns.")
+                    result.pop("error", None)
                 try:
                     result["ipv6_disabled"] = Path("/proc/sys/net/ipv6/conf/all/disable_ipv6").read_text().strip() == "1"
                 except OSError:
@@ -401,7 +483,9 @@ def status(profile, backend="manual-profile"):
             if protection:
                 result.update(state="blocked" if protection["kill_switch"] else "recovery-required",
                               kill_switch=protection["kill_switch"], can_disconnect=True,
-                              error="The tunnel is absent. Disconnect to release its traffic protection and restore normal networking.")
+                              error="Setup was interrupted before protection was confirmed. Restore normal networking before retrying."
+                              if protection["phase"] == "prepared" else
+                              "The tunnel is absent. Disconnect to release its traffic protection and restore normal networking.")
                 return result
             output = run([vendor, "--status"], timeout=8).strip().lower()
             if re.search(r"\bnot connected\b|\bdisconnected\b|\bno vpn connection", output):
@@ -449,13 +533,19 @@ def operate(action, country, city, profile, backend="manual-profile", protocol="
         raise ValueError("Unsupported VPN operation or protocol")
     if kill_switch and (backend != "official-cli" or protocol != "wireguard"):
         raise ValueError("The kill switch requires the official CLI with WireGuard")
+    if action in ("connect", "switch"):
+        failed = next((item for item in prerequisites(backend) if not item["ready"]), None)
+        if failed:
+            raise BridgeError(failed["label"] + ": " + failed["message"], "setup")
     if action == "release-protection":
         if backend != "official-cli":
             raise ValueError("Select Official CLI to release its traffic protection")
         protection = traffic_protection()
         if not protection or protection["uid"] != os.getuid():
             raise BridgeError("No traffic protection owned by this user was identified.", "protection")
-        run(privileged_command(vendor_binary()) + ["--release-protection"], timeout=30)
+        # Release does not execute the vendor; it must remain usable if that
+        # binary is missing while the trusted adapter and owned guard remain.
+        run(privileged_command("/usr/local/cyberghost/cyberghostvpn") + ["--release-protection"], timeout=30)
         return status(profile, backend)
     if backend == "manual-profile":
         if traffic_protection():
@@ -548,11 +638,19 @@ def operation_lock():
 
 
 def dispatch(args):
+    if args.action == "diagnostics":
+        return {"report": diagnostics(args.backend)}
     validate_profile(args.profile)
     if args.action == "check":
         result = status(args.profile, args.backend)
+        checks = prerequisites(args.backend)
         result.update(nmcli=bool(shutil.which("nmcli")), pkexec=Path("/usr/bin/pkexec").is_file(),
-                      has_vendor=bool(safe_vendor_binary()))
+                      has_vendor=bool(safe_vendor_binary()), prerequisites=checks,
+                      setup_ready=all(item["ready"] for item in checks))
+        result["setup_message"] = next((item["label"] + ": " + item["message"]
+                                        for item in checks if not item["ready"]), "")
+        if not result["setup_ready"]:
+            result["can_connect"] = False
         return result
     if args.action == "status":
         return status(args.profile, args.backend)
@@ -562,7 +660,11 @@ def dispatch(args):
         before = status(args.profile, args.backend)
         if before["state"] != "connected":
             raise BridgeError("Connect first to check your public IP.", "disconnected")
-        value = run(["/usr/bin/curl", "--ipv4", "--noproxy", "*", "--proto", "=https", "--silent", "--show-error", "--fail",
+        device = before.get("device", "")
+        if not isinstance(device, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,15}", device):
+            raise BridgeError("Cannot identify the VPN interface for the IP lookup.", "unconfirmed")
+        value = run(["/usr/bin/curl", "--disable", "--ipv4", "--interface", "if!" + device,
+                     "--noproxy", "*", "--proto", "=https", "--silent", "--show-error", "--fail",
                      "--connect-timeout", "3", "--max-time", "6", "--max-filesize", "64", "https://api.ipify.org"], timeout=8).strip()
         try:
             parsed = ipaddress.IPv4Address(value)
@@ -579,7 +681,7 @@ def dispatch(args):
         if args.backend != "official-cli":
             raise ValueError("Select Official CLI to verify its traffic protection")
         with operation_lock():
-            output = run(privileged_command(vendor_binary()) + ["--verify-protection"], timeout=30)
+            output = run(privileged_command("/usr/local/cyberghost/cyberghostvpn") + ["--verify-protection"], timeout=30)
         try:
             value = json.loads(output)
             if not isinstance(value, dict) or type(value.get("protection_verified")) is not bool:
@@ -593,7 +695,7 @@ def dispatch(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["check", "status", "countries", "cities", "servers", "connect", "switch", "disconnect", "release-protection", "verify-protection", "ip"])
+    parser.add_argument("action", choices=["check", "status", "diagnostics", "countries", "cities", "servers", "connect", "switch", "disconnect", "release-protection", "verify-protection", "ip"])
     parser.add_argument("--country", default="DE")
     parser.add_argument("--city", default="")
     parser.add_argument("--profile", default=PROFILE)
