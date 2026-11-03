@@ -313,6 +313,7 @@ def kernel_tunnel_status(protocol):
                    and any(route.get("dev") == item.get("ifname") for route in routes)), None)
     tunnel = routed or tunnels[0]
     return {"state": "connected" if routed else "unknown", "protocol": protocol,
+            "tunnel_detected": True, "ipv4_route": bool(routed),
             "device": tunnel.get("ifname", ""), "interface_index": tunnel.get("ifindex"),
             "can_connect": False, "can_disconnect": True, "verified": False,
             "evidence": "Tunnel interface and IPv4 route" if routed else "Tunnel exists without the expected IPv4 route",
@@ -420,6 +421,7 @@ def save_details(snapshot, country, city, server, output, known_servers=()):
 def status(profile, backend="manual-profile"):
     result = {"backend": backend, "state": "unknown", "profile": profile,
               "location": "", "server": "", "protocol": "", "device": "",
+              "tunnel_detected": None, "ipv4_route": None,
               "verified": False, "can_connect": False, "can_disconnect": False}
     try:
         protection = traffic_protection()
@@ -489,7 +491,7 @@ def status(profile, backend="manual-profile"):
                 return result
             output = run([vendor, "--status"], timeout=8).strip().lower()
             if re.search(r"\bnot connected\b|\bdisconnected\b|\bno vpn connection", output):
-                result.update(state="disconnected", can_connect=True)
+                result.update(state="disconnected", can_connect=True, tunnel_detected=False, ipv4_route=False)
             elif re.search(r"\bconnecting\b", output):
                 result["state"] = "connecting"
             elif re.search(r"(?m)^\s*(?:vpn )?(?:connected|connection established|connection found)[.!]?\s*$", output):

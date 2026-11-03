@@ -35,3 +35,12 @@
   This UI-only pass began with the user's VPN already active and preserved it;
   do not disconnect a pre-existing session merely to reproduce older cleanup
   notes. No general protection claim follows from this pass.
+
+- The 0.7 update adds health freshness, generic native notifications, guided
+  setup and Quick Connect. Keep manual-profile route observations unknown;
+  never turn a stale timestamp or interface label into a protection claim.
+  Quick Connect must validate fresh catalogs, stop on removed targets, and
+  cancel deferred connection on revision/mode changes. Store lastSuccessful
+  only after confirmed connect/switch; keep it out of shareable diagnostics.
+  Run Node 18+ test-only checks with `node --test tests/test_ui_logic.mjs` in
+  addition to the Python/native checks. Preserve the unchanged API 4 package.

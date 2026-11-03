@@ -84,6 +84,18 @@ Ui.Panel {
     var hours = Math.floor(minutes / 60)
     return hours ? hours + "h " + (minutes % 60) + "m" : minutes + "m"
   }
+  function healthLabel() {
+    if (!vpn || vpn.statusFailed) return "Connection health unavailable · Refresh status"
+    if (vpn.statusStale) return "Status is stale · Refresh before relying on it"
+    if (vpn.snapshot.state === "waiting-network") return "Waiting for an upstream network · Connectivity not confirmed"
+    if (["blocked", "recovery-required", "unknown"].indexOf(vpn.snapshot.state) >= 0)
+      return "Connection needs attention · Check recovery options"
+    if (vpn.snapshot.tunnel_detected === true)
+      return vpn.snapshot.ipv4_route === true ? "Tunnel detected · IPv4 route present" : "Tunnel detected · IPv4 route missing"
+    if (vpn.snapshot.state === "disconnected") return "No active VPN reported"
+    if (vpn.snapshot.state === "connected") return (root.dynamicReady ? "Client" : "NetworkManager") + " reports connected · Route not checked"
+    return "Connection needs attention · Check recovery options"
+  }
   function panelBounds() {
     const point = content.mapToGlobal(-popup.padding - Border.left(popup.borderSpec),
                                      -popup.padding - Border.top(popup.borderSpec))
@@ -219,6 +231,22 @@ Ui.Panel {
             font.pixelSize: Style.font.bodySmall
           }
           Label {
+            objectName: "vpnHealthSummary"
+            text: root.healthLabel()
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label {
+            visible: root.vpn && root.vpn.statusStale && !root.vpn.statusFailed && root.vpn.lastStatusAt > 0
+            text: "Last successful status · " + (root.vpn ? root.vpn.ageLabel(root.vpn.lastStatusAt) : "Not checked")
+            font.pixelSize: Style.font.bodySmall
+          }
+          Action {
+            objectName: "vpnSetupShortcut"
+            visible: root.vpn && !root.vpn.setupReady
+            text: "Complete setup"
+            onClicked: root.selectSection("settings")
+          }
+          Label {
             visible: root.dynamicReady
             text: root.vpn && root.vpn.snapshot.state === "recovery-required" ? "Protection unconfirmed · Restore or verify in Settings."
               : root.vpn && root.vpn.snapshot.kill_switch === true ? "Kill switch configured · Verify in Settings"
@@ -238,6 +266,28 @@ Ui.Panel {
               && root.vpn.setupMessage !== root.vpn.message
             text: root.vpn ? root.vpn.setupMessage : ""
             Accessible.role: Accessible.AlertMessage
+          }
+          Action {
+            objectName: "vpnQuickConnect"
+            visible: root.section === "locations" && root.dynamicReady && !root.canDisconnect
+            width: parent.width
+            text: root.vpn && root.vpn.quickConnecting ? "Checking saved location…" : "Quick Connect"
+            enabled: root.vpn && !root.vpn.working && !root.vpn.protocolRefresh && root.vpn.setupReady
+              && root.vpn.snapshot.state === "disconnected" && root.vpn.snapshot.can_connect === true && !!root.vpn.quickTarget
+            onClicked: root.vpn.quickConnect()
+          }
+          Label {
+            visible: root.section === "locations" && root.dynamicReady && !root.canDisconnect
+            text: root.vpn && root.vpn.quickTarget ? "Quick Connect · " + root.favoriteButtonLabel(root.vpn.quickTarget)
+              : root.vpn && root.vpn.quickTargetKey ? "Quick Connect favorite unavailable. Choose another in Settings."
+              : "Connect once or choose a favorite in Settings to enable Quick Connect."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Action {
+            objectName: "vpnCancelQuickConnect"
+            visible: root.vpn && root.vpn.quickConnecting
+            text: "Cancel Quick Connect"
+            onClicked: root.vpn.cancelQuickConnect()
           }
           Action {
             objectName: "vpnConnectAction"
@@ -394,6 +444,9 @@ Ui.Panel {
             spacing: Style.spacing.controlGap
             Ui.PanelSeparator { foreground: root.ink }
             Ui.PanelSectionHeader { text: "Connection details"; foreground: root.ink }
+            Label { text: "Status updated · " + (root.vpn ? root.vpn.ageLabel(root.vpn.lastStatusAt) : "Not checked") }
+            Label { text: root.vpn && root.vpn.verificationAt ? "Protection check · " + root.vpn.ageLabel(root.vpn.verificationAt) : "Protection · Not checked for this observed session" }
+            Label { text: root.vpn && root.vpn.protectionCheck ? root.vpn.protectionCheck : "A tunnel and route do not establish handshakes, DNS/IPv6 protection or provider identity."; font.pixelSize: Style.font.bodySmall }
             Label { text: "Backend   " + (root.dynamicReady ? "Official CLI" : "NetworkManager") }
             Label { visible: !root.dynamicReady; text: "Profile   " + (root.vpn ? root.vpn.profileName : "—") }
             Label { text: "Protocol  " + (root.vpn && root.vpn.snapshot.protocol ? root.vpn.snapshot.protocol : "Not reported") }
@@ -408,7 +461,7 @@ Ui.Panel {
               text: "Duration  " + (root.vpn ? root.durationLabel(root.vpn.snapshot.duration) : "")
             }
             Label { visible: !!(root.vpn && root.vpn.snapshot.endpoint); text: "Endpoint  " + (root.vpn ? root.vpn.snapshot.endpoint : "") }
-            Label { text: "IPv4      " + (root.vpn && root.vpn.publicIp ? root.vpn.publicIp + " (last lookup)" : "Not checked") }
+            Label { text: "IPv4      " + (root.vpn && root.vpn.publicIp ? root.vpn.publicIp + " · " + root.vpn.ageLabel(root.vpn.publicIpAt) : "Not checked") }
             Action {
               objectName: "vpnIpAction"
             text: "Check public IPv4"
@@ -429,6 +482,34 @@ Ui.Panel {
             spacing: Style.spacing.controlGap
             Ui.PanelSeparator { foreground: root.ink }
             Ui.PanelSectionHeader { text: "Settings & diagnostics"; foreground: root.ink }
+          Ui.Toggle {
+            objectName: "vpnNotifications"
+            width: parent.width
+            label: "Connection notifications"
+            checked: root.vpn && root.vpn.notifications
+            foreground: root.ink
+            onClicked: { root.vpn.notifications = !root.vpn.notifications; root.vpn.persistSettings({ notifications: root.vpn.notifications }) }
+          }
+          Ui.Dropdown {
+            objectName: "vpnQuickTarget"
+            visible: root.dynamicReady
+            width: parent.width
+            label: "Quick Connect location"
+            value: root.vpn ? root.vpn.quickTargetKey : ""
+            options: [{ value: "", label: "Last successful location" }].concat(root.vpn ? root.vpn.favorites.filter(function(item) { return root.vpn.validTarget(item) }).map(function(item) {
+              return { value: root.vpn.favoriteKey(item), label: root.favoriteButtonLabel(item) }
+            }) : [])
+            foreground: root.ink
+            enabled: root.vpn && !root.vpn.working && !root.vpn.quickConnecting
+            onChanged: function(value) { root.vpn.quickTargetKey = value; root.vpn.persistSettings({ quickTargetKey: value }) }
+          }
+          Action {
+            objectName: "vpnForgetLastLocation"
+            visible: root.dynamicReady && root.vpn && root.vpn.validTarget(root.vpn.lastSuccessful)
+            text: "Forget last successful location"
+            enabled: root.vpn && !root.vpn.working && !root.vpn.quickConnecting
+            onClicked: { root.vpn.lastSuccessful = null; root.vpn.persistSettings({ lastSuccessful: null }) }
+          }
           Ui.Dropdown {
             id: backendPicker
               objectName: "vpnBackendPicker"
@@ -465,8 +546,16 @@ Ui.Panel {
             enabled: root.vpn && !root.vpn.working
             onClicked: root.vpn.refresh()
           }
+          Ui.PanelSectionHeader { text: "Setup checklist"; foreground: root.ink }
+          Label {
+            text: !root.vpn || !root.vpn.setupChecks.length ? "Checking local prerequisites…"
+              : root.vpn.setupReady ? (root.dynamicReady ? "System checks passed. Complete local authentication, then connect."
+                : "System checks passed. Use an existing OpenVPN profile with valid provider credentials.")
+              : "Resolve the items marked Needs attention, then refresh diagnostics."
+            font.pixelSize: Style.font.bodySmall
+          }
           Repeater {
-            model: root.vpn ? root.vpn.setupChecks.filter(function(item) { return item.ready !== true }) : []
+            model: root.vpn ? root.vpn.setupChecks : []
             delegate: Label {
               required property var modelData
               text: (modelData.ready === true ? "Ready · " : "Needs attention · ") + modelData.label
@@ -475,18 +564,19 @@ Ui.Panel {
             }
           }
           Label {
-            visible: root.vpn && root.vpn.setupReady
-            text: "Local setup is ready. Account authentication is checked when connecting."
+            visible: root.dynamicReady && root.vpn && root.vpn.setupReady
+            text: "Account setup · Not inspected. Authentication is checked only when connecting."
             font.pixelSize: Style.font.bodySmall
           }
           Label {
+            visible: root.dynamicReady
             text: root.vpn && root.vpn.hasVendor ? "Official CLI detected. Arch/Omarchy integration is experimental; connection status does not establish privacy protection."
               : "Official CLI not detected in a trusted system path. Arch/Omarchy is not a vendor-supported platform."
             font.pixelSize: Style.font.bodySmall
           }
           Label {
             visible: root.dynamicReady
-            text: "First use: install the reviewed client package, then run account setup in your own terminal. Enter credentials only in the official client."
+            text: "Install → review system checks → authenticate locally → connect. The panel never installs packages or handles credentials."
             font.pixelSize: Style.font.bodySmall
           }
           Ui.TextField {

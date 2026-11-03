@@ -2,7 +2,7 @@
 
 ## Trust boundaries
 
-The 0.6 package candidate is `cyberghostvpn-omarchy` 1.5.0-8 with helper API
+The package remains `cyberghostvpn-omarchy` 1.5.0-8 with helper API
 4. It provides and conflicts with the previous `cyberghostvpn` package, whose
 1.5.0-7/API 4 version remains usable. The vendor executable is
 checksum-pinned and unchanged. The package build includes vendor-distributed
@@ -115,3 +115,25 @@ The real backend and original theme were restored. A pre-existing VPN and its
 guard metadata remained unchanged; no VPN transition was performed for 0.6.
 All captures remain private. These UI checks do not extend the earlier
 packet-level protection evidence.
+
+The pending 0.7 UI work is on `feat/everyday-use-0.7` and is not merged or
+released. It adds freshness timestamps for accepted status, explicit
+protection checks and public IPv4 lookups. Tunnel and IPv4-route observations
+are nullable; the manually selected NetworkManager profile route is unchecked.
+These observations do not establish provider identity, DNS/IPv6 protection,
+handshakes or continuous integrity. Quick Connect uses only the selected
+favorite or last successfully connected location, freshly validates discovered
+country/city/server choices, and stops when a saved target is unavailable.
+Local saved-location settings are omitted from shareable diagnostics.
+
+Notifications contain generic state/action text, not locations, IPs or raw
+errors. Users can disable them; initial polling is silent, passive state
+notices are deduplicated, and explicit operations may notify. Guided setup
+offers the official terminal setup command without collecting credentials or
+installing packages. No changes were made to the root helper, API 4, package
+1.5.0-8, reconnection behavior or kill-switch behavior. Native dark/light
+status/setup and focus/Escape checks passed. Native mock fixtures exercised
+Quick Connect, cancellation, unavailable targets, authentication errors,
+notification toggling and delayed-status navigation/Escape. The real backend,
+original theme and plugin preferences were restored. No VPN transition was
+performed; these UI checks add no network protection evidence.

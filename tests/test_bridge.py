@@ -356,6 +356,8 @@ class NetworkManagerTests(unittest.TestCase):
                  patch.object(b, "active_connections", return_value=rows):
                 result = b.status("openvpn")
             self.assertEqual(result["state"], state)
+            self.assertIsNone(result["tunnel_detected"])
+            self.assertIsNone(result["ipv4_route"])
         for output in ("bad:activated:vpn:tun0\n", f"{UUID}:activated:vpn:tun0:extra\n"):
             with self.subTest(output=output), \
                  patch.object(b, "profile_info", return_value=UUID), \
@@ -410,6 +412,8 @@ class WireGuardStatusTests(unittest.TestCase):
                 run.assert_called_once()
             else:
                 self.assertEqual(result["state"], expected)
+                self.assertTrue(result["tunnel_detected"])
+                self.assertEqual(result["ipv4_route"], expected == "connected")
                 self.assertEqual(result["protocol"], "WireGuard")
                 self.assertEqual(result["device"], "cyberghost")
                 self.assertTrue(result["can_disconnect"])

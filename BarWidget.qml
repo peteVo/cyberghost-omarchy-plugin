@@ -1,5 +1,6 @@
 pragma ComponentBehavior: Bound
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui as Ui
@@ -23,6 +24,20 @@ Ui.BarWidget {
     ? String(setting("protocol", "wireguard")) : "wireguard"
   property string selectedServer: ""
   property var favoriteToApply: null
+  property var lastSuccessful: setting("lastSuccessful", null)
+  property string quickTargetKey: String(setting("quickTargetKey", ""))
+  property bool quickConnecting: false
+  property bool notifications: setting("notifications", true) === true
+  property string observedState: ""
+  property double lastStatusAt: 0
+  property bool statusFailed: false
+  property double verificationAt: 0
+  property double publicIpAt: 0
+  property double clockNow: Date.now()
+  readonly property bool statusStale: lastStatusAt <= 0 || clockNow < lastStatusAt || clockNow - lastStatusAt > 45000
+  readonly property var quickTarget: quickTargetKey
+    ? favorites.find(function(item) { return root.validTarget(item) && root.favoriteKey(item) === root.quickTargetKey }) || null
+    : validTarget(lastSuccessful) ? lastSuccessful : null
   property string publicIp: ""
   property string protectionCheck: ""
   property string diagnosticReport: ""
@@ -76,6 +91,103 @@ Ui.BarWidget {
   function refresh() {
     if (!working && !protocolRefresh) invoke("check")
   }
+  function ageLabel(at) {
+    if (!at || clockNow < at) return "Not checked"
+    const seconds = Math.floor((clockNow - at) / 1000)
+    return seconds < 60 ? seconds + "s ago" : Math.floor(seconds / 60) + "m ago"
+  }
+  function clearHealth() {
+    lastStatusAt = 0
+    statusFailed = false
+    verificationAt = 0
+    publicIpAt = 0
+    protectionCheck = ""
+    observedState = ""
+  }
+  function notify(title, body, operation) {
+    const peers = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
+    if (notifications && (operation === true || !peers.length || peers[0] === root))
+      Quickshell.execDetached(["/usr/bin/omarchy", "notification", "send", "--app-name", "CyberGhost for Omarchy", title, body])
+  }
+  function noteStateFailure(silent) {
+    statusFailed = true
+    verificationAt = 0
+    protectionCheck = ""
+    if (!silent && observedState && observedState !== "unknown")
+      notify("VPN status unavailable", "Open the VPN panel and refresh before relying on the connection.")
+    observedState = "unknown"
+  }
+  function observeState(data, task) {
+    clockNow = Date.now()
+    if (data.state === "unknown") noteStateFailure()
+    else {
+      lastStatusAt = clockNow
+      statusFailed = false
+      const changed = observedState && observedState !== data.state
+      if (task === "connect" || task === "switch")
+        notify(task === "switch" ? "VPN location switched" : "VPN connected", "Connection reported. Check Details for routing and protection observations.", true)
+      else if (task === "disconnect" || task === "release-protection")
+        notify("VPN disconnected", "Normal networking was requested. Check the panel if recovery needs attention.", true)
+      else if (changed && ["waiting-network", "blocked", "recovery-required", "disconnected"].indexOf(data.state) >= 0)
+        notify("VPN needs attention", "The connection state changed. Open the VPN panel for recovery options.")
+      else if (changed && data.state === "connected")
+        notify("VPN connection returned", "Connection reported again. Protection is checked separately.")
+      observedState = data.state
+    }
+    if ((task === "connect" || task === "switch") && data.state === "connected" && dynamicMode) {
+      const target = { country: pendingCountry, city: pendingCity, protocol: selectedProtocol, server: selectedServer }
+      if (validTarget(target)) { lastSuccessful = target; persistSettings({ lastSuccessful: target }) }
+    }
+  }
+  function validTarget(item) {
+    return !!item && typeof item === "object" && !Array.isArray(item)
+      && typeof item.country === "string" && /^[A-Z]{2}$/.test(item.country)
+      && ["auto", "wireguard", "openvpn"].indexOf(item.protocol) >= 0
+      && (item.city === undefined || (typeof item.city === "string" && item.city.length <= 64))
+      && (item.server === undefined || (typeof item.server === "string" && (!item.server || (item.city && /^[a-z0-9][a-z0-9-]{0,63}$/.test(item.server)))))
+  }
+  function cancelSavedTarget() { favoriteToApply = null; quickConnecting = false }
+  function cancelQuickConnect() {
+    selectionRevision++
+    cancelSavedTarget()
+    message = "Quick Connect cancelled before connecting."
+  }
+  function startSavedTarget(target, connectAfter) {
+    if (working || protocolRefresh || !dynamicMode) return
+    if (!validTarget(target)) {
+      message = "This saved location has invalid settings. Remove it and save the location again."
+      cancelSavedTarget()
+      return
+    }
+    favoriteToApply = { country: target.country, city: target.city || "", protocol: target.protocol, server: target.server || "" }
+    quickConnecting = connectAfter === true
+    selectedCountry = target.country
+    selectedProtocol = target.protocol
+    resetLocations()
+    selectionRevision++
+    discovery = ({ items: [], reason: "Checking saved country…" })
+    persistSettings({ protocol: selectedProtocol })
+    invoke("countries")
+  }
+  function quickConnect() {
+    if (working || protocolRefresh || !setupReady || !dynamicMode || snapshot.state !== "disconnected" || snapshot.can_connect !== true) return
+    if (!quickTarget) { message = "Choose a favorite for Quick Connect or connect to a location once."; return }
+    if (killSwitch && quickTarget.protocol !== "wireguard") {
+      message = "Quick Connect needs a WireGuard location while the kill switch is selected."
+      return
+    }
+    startSavedTarget(quickTarget, true)
+  }
+  function completeSavedTarget() {
+    const connectAfter = quickConnecting
+    const revision = selectionRevision
+    cancelSavedTarget()
+    if (connectAfter) Qt.callLater(function() {
+      if (root.selectionRevision === revision && !root.working && root.setupReady
+          && root.snapshot.state === "disconnected" && root.snapshot.can_connect === true)
+        root.invoke("connect")
+    })
+  }
   function arrayFrom(value) {
     if (!value || typeof value.length !== "number" || typeof value === "string") return []
     var result = []
@@ -103,11 +215,12 @@ Ui.BarWidget {
     setupChecks = []
     setupMessage = "Checking local setup…"
     diagnosticReport = ""
+    clearHealth()
     persistSettings({ backend: value })
     selectedCountry = ""
     resetLocations()
     discovery = ({ items: [], reason: "" })
-    favoriteToApply = null
+    cancelSavedTarget()
     protocolRefresh = false
     selectionRevision++
     publicIp = ""
@@ -119,12 +232,15 @@ Ui.BarWidget {
     profileName = value
     persistSettings({ profile: value })
     publicIp = ""
+    clearHealth()
+    cancelSavedTarget()
+    selectionRevision++
     snapshot = ({ backend: backendMode, state: "unknown", can_connect: false, can_disconnect: false })
     refresh()
   }
   function selectCountry(value) {
     if (working || protocolRefresh || value === selectedCountry) return
-    favoriteToApply = null
+    cancelSavedTarget()
     selectedCountry = value
     resetLocations()
     selectionRevision++
@@ -132,7 +248,7 @@ Ui.BarWidget {
   }
   function selectCity(value) {
     if (working || protocolRefresh || value === selectedCity) return
-    favoriteToApply = null
+    cancelSavedTarget()
     selectedCity = value
     selectedServer = ""
     servers = ({ items: [], reason: value ? "Loading servers…" : "Choose a city to browse individual servers." })
@@ -141,7 +257,7 @@ Ui.BarWidget {
   }
   function selectProtocol(value) {
     if (working || protocolRefresh || ["auto", "wireguard", "openvpn"].indexOf(value) < 0 || value === selectedProtocol) return
-    favoriteToApply = null
+    cancelSavedTarget()
     selectedProtocol = value
     selectedServer = ""
     cities = ({ items: [], reason: "Checking cities for selected protocol…" })
@@ -174,7 +290,7 @@ Ui.BarWidget {
   function removeFavorite(index) {
     if (working || index < 0 || index >= favorites.length) return
     if (favoriteToApply && favoriteKey(favoriteToApply) === favoriteKey(favorites[index])) {
-      favoriteToApply = null
+      cancelSavedTarget()
       selectionRevision++
     }
     var next = favorites.slice()
@@ -184,21 +300,7 @@ Ui.BarWidget {
   }
   function applyFavorite(index) {
     if (working || protocolRefresh || index < 0 || index >= favorites.length) return
-    var favorite = favorites[index]
-    if (!favorite || ["auto", "wireguard", "openvpn"].indexOf(favorite.protocol) < 0) {
-      message = "This saved location has invalid settings. Remove it and save the location again."
-      return
-    }
-    favoriteToApply = favorite
-    selectedCountry = String(favorite.country || "")
-    selectedCity = ""
-    selectedServer = ""
-    selectedProtocol = favorite.protocol
-    selectionRevision++
-    discovery = ({ items: [], reason: "Checking saved country…" })
-    resetLocations()
-    persistSettings({ protocol: selectedProtocol })
-    invoke("countries")
+    startSavedTarget(favorites[index], false)
   }
   function invoke(task) {
     if (working) return
@@ -218,7 +320,10 @@ Ui.BarWidget {
     if (task === "connect" || task === "switch" || task === "disconnect" || task === "release-protection") {
       publicIp = ""
       protectionCheck = ""
+      publicIpAt = 0
+      verificationAt = 0
     }
+    if (task === "verify-protection") { verificationAt = 0; protectionCheck = "" }
     if (task !== "status") message = ""
     pending = task
     pendingCountry = selectedCountry
@@ -257,6 +362,8 @@ Ui.BarWidget {
         throw new Error("Invalid connection state")
       if (data.ok && task === "ip" && (typeof data.ip !== "string" || !data.ip.length))
         throw new Error("Invalid IP result")
+      if (data.ok && task === "verify-protection" && typeof data.protection_verified !== "boolean")
+        throw new Error("Invalid protection result")
       if (data.ok && task === "diagnostics" && (!data.report || typeof data.report !== "object"
           || Array.isArray(data.report) || data.report.schema !== 1 || typeof data.report.plugin_version !== "string"
           || (data.report.plugin_version !== "unknown" && !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(data.report.plugin_version))
@@ -294,14 +401,23 @@ Ui.BarWidget {
         snapshot = ({ backend: backendMode, state: "unknown", can_connect: false, can_disconnect: false })
         publicIp = ""
       }
-      if (task === "countries" || task === "cities" || task === "servers") favoriteToApply = null
+      if (task === "countries" || task === "cities" || task === "servers") cancelSavedTarget()
+      if (["status", "check", "connect", "switch", "disconnect", "release-protection"].indexOf(task) >= 0) {
+        const operation = ["connect", "switch", "disconnect", "release-protection"].indexOf(task) >= 0
+        noteStateFailure(operation)
+        if (operation)
+          notify("VPN operation needs attention", "Open the VPN panel for the error and recovery options.", true)
+      }
       if (task === "countries" || task === "cities") protocolRefresh = false
       if (task === "check") { setupReady = false; setupMessage = message }
       if (task === "diagnostics") diagnosticReport = ""
+      if (task === "verify-protection") { verificationAt = 0; protectionCheck = "" }
       if (panelLoader.item) panelLoader.item.revealMessage()
       return
     }
+    clockNow = Date.now()
     if (task === "countries") {
+      if (pendingRevision !== selectionRevision) return
       discovery = data
       if (protocolRefresh && !selectedCountry) {
         protocolRefresh = false
@@ -318,7 +434,7 @@ Ui.BarWidget {
       }
       if (favoriteToApply) {
         if (!data.items.some(function(item) { return item.code === favoriteToApply.country })) {
-          favoriteToApply = null
+          cancelSavedTarget()
           message = "The saved country is no longer available. Choose a discovered country or remove the favorite."
           return
         }
@@ -349,7 +465,7 @@ Ui.BarWidget {
       }
       if (favoriteToApply) {
         if (favoriteToApply.city && data.items.indexOf(favoriteToApply.city) < 0) {
-          favoriteToApply = null
+          cancelSavedTarget()
           message = "The saved city is no longer available. Choose a discovered city or remove the favorite."
           return
         }
@@ -359,25 +475,26 @@ Ui.BarWidget {
         selectedServer = ""
       }
       if (selectedCity) invoke("servers")
-      else if (favoriteToApply) favoriteToApply = null
+      else if (favoriteToApply) completeSavedTarget()
     } else if (task === "servers") {
       if (pendingCountry !== selectedCountry || pendingCity !== selectedCity || pendingRevision !== selectionRevision) return
       servers = data
       if (favoriteToApply) {
         if (favoriteToApply.server && !data.items.some(function(item) { return item.name === favoriteToApply.server })) {
-          favoriteToApply = null
+          cancelSavedTarget()
           message = "The saved server is no longer available. Choose a discovered server or remove the favorite."
           return
         }
         selectedServer = favoriteToApply.server || ""
-        favoriteToApply = null
+        completeSavedTarget()
       } else if (selectedServer && !data.items.some(function(item) { return item.name === selectedServer })) selectedServer = ""
     } else if (task === "diagnostics") {
       diagnosticReport = JSON.stringify(data.report, null, 2)
       if (panelLoader.item) panelLoader.item.revealReport()
     }
-    else if (task === "ip") publicIp = data.ip || ""
+    else if (task === "ip") { publicIp = data.ip || ""; publicIpAt = clockNow }
     else if (task === "verify-protection") {
+      verificationAt = clockNow
       protectionCheck = data.protection_verified === true ? "Last check: rules and tunnel matched."
         : "Last check failed. Disconnect and reconnect before relying on protection."
       if (data.protection_verified !== true) message = protectionCheck
@@ -386,7 +503,10 @@ Ui.BarWidget {
       if (data.state !== "connected" || snapshot.state !== "connected" || snapshot.device !== data.device || snapshot.interface_index !== data.interface_index) {
         publicIp = ""
         protectionCheck = ""
+        publicIpAt = 0
+        verificationAt = 0
       }
+      observeState(data, task)
       snapshot = data
       message = data.error || data.warning || ""
       if (message && panelLoader.item) panelLoader.item.revealMessage()
@@ -419,6 +539,10 @@ Ui.BarWidget {
         killSwitch: root.killSwitch, configuredKillSwitch: root.snapshot.kill_switch === true,
         ipv6Guard: root.snapshot.ipv6_guard === true,
         setupReady: root.setupReady, setupChecks: root.setupChecks.length,
+        statusStale: root.statusStale, statusFailed: root.statusFailed,
+        statusChecked: root.lastStatusAt > 0, verificationChecked: root.verificationAt > 0,
+        quickConnecting: root.quickConnecting, quickTargetReady: !!root.quickTarget,
+        notificationsEnabled: root.notifications, lastSuccessfulSaved: root.validTarget(root.lastSuccessful),
         reportReady: root.diagnosticReport.length > 0,
         reportSelected: panelLoader.item ? panelLoader.item.reportSelected : false,
         favorites: root.favorites.length, hasIp: root.publicIp.length > 0, message: root.message })
@@ -431,6 +555,12 @@ Ui.BarWidget {
     // Discard stderr; it may contain client/account details.
     onExited: function(exitCode) { root.helperExit = exitCode; Qt.callLater(root.finish) }
     onRunningChanged: if (!running) Qt.callLater(root.finish)
+  }
+  Timer {
+    interval: 1000
+    repeat: true
+    running: root.opened
+    onTriggered: root.clockNow = Date.now()
   }
   Timer {
     interval: 15000
