@@ -1,10 +1,11 @@
-# Test the 0.6 candidate
+# Test the 0.7 beta
 
-Wider-machine validation of 0.6 is pending. When testing an unreleased candidate, test
-only the exact pull request head commit: record its full SHA from GitHub, fetch
+Wider-machine validation of the 0.7 beta remains pending. Record the exact
+release tag and full commit SHA when testing a release. When testing an unreleased
+candidate, test only the exact pull request head commit: record its full SHA from GitHub, fetch
 that commit into a disposable Omarchy 4 VM, and confirm `git rev-parse HEAD`
 matches before testing. Do not report an unqualified default-branch install as
-0.6. Protect the host by keeping the VM network and snapshot disposable. A VM
+0.7. Protect the host by keeping the VM network and snapshot disposable. A VM
 cannot validate physical Wi-Fi handoff or laptop suspend/resume.
 
 ## Before installing
@@ -31,6 +32,19 @@ cannot validate physical Wi-Fi handoff or laptop suspend/resume.
 
 - [ ] Confirm the native bar entry opens the panel and defaults to Official
   CLI / WireGuard.
+- [ ] Check nullable tunnel/IPv4-route observations and status staleness after
+  45 seconds or a backward clock change. The manual NetworkManager profile
+  route is unchecked. Protection checks and public IPv4 lookups are explicit
+  timestamped actions, not continuous verification.
+- [ ] Check Quick Connect with a selected favorite and no favorite selected.
+  Confirm fresh discovery and validation, no substitution for unavailable
+  targets, cancellation/setup/network failure stopping before connection,
+  and the clear-last-successful action.
+- [ ] Check notification opt-out, quiet initial polling, deduplicated passive
+  notices and generic operation notices. Confirm saved locations stay local
+  and are omitted from shareable diagnostics.
+- [ ] Check the guided prerequisite list and copyable official
+  `sudo cyberghostvpn --setup` command; never enter credentials in the panel.
 - [ ] Use **Generate shareable diagnostic report** and verify the report contains only its
   schema, plugin/Python versions, platform status, selected backend, versions
   or nulls for Omarchy, Quickshell, NetworkManager, systemd and the two
@@ -79,3 +93,23 @@ The candidate suite passed 134 tests with the built package and no skips on
 the ThinkPad. CI runs the source suite on Python 3.12 and 3.14 with nine
 private-package skips; native UI and live-network checks are separate. Static checks do
 not prove native rendering or live VPN behavior.
+
+The 0.7 candidate also has 16 mocked UI-logic tests runnable with Node.js 18
+or newer:
+
+```bash
+node --test tests/test_ui_logic.mjs
+```
+
+Node is test-only, not an application dependency. Real native dark/light
+status/setup and focus/Escape checks passed. Native mock fixtures passed
+specific-server and Any-city Quick Connect, unavailable-server rejection,
+cancellation, authentication failure without recording success, notification
+toggling, distinguishing same-city favorites by searching server descriptions,
+forgetting the saved last location, explicit verification timestamps
+and disconnect invalidation, and stale-status navigation/Escape while a mock
+worker was delayed.
+The initial Escape assertion ran before the closing animation finished; an
+isolated check with a bounded animation wait passed. The real backend, theme
+and plugin preferences were restored, with no VPN transition. These checks
+verify UI interaction, not fresh live VPN connectivity.

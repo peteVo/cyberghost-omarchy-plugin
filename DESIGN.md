@@ -64,3 +64,29 @@ One correction bounded report focus scrolling. Independent source and visual
 reviews found no material blocker. The existing VPN/guard and original theme
 were preserved; captures are private. Qt lint exits 0 with dynamic-property
 and declaration-style warnings, not syntax/import errors.
+
+
+The 0.7 everyday-use update preserves this native visual system and the small
+shared ghost. Connection health separates nullable tunnel/IPv4-route observations
+from time-stamped explicit verification and public-IP lookup. Accepted status
+expires after 45 seconds (or a backwards clock change); failed observations
+show unavailable. Manual-profile routes remain unchecked.
+
+Quick Connect validates a chosen favorite or last successful location through
+fresh discovery before starting a connection. Missing chosen favorites never
+fall back silently. Only confirmed connects/switches update the local preference,
+which the user can forget. Cancellation applies during discovery. Quick Connect
+controls stay in Locations so Details and Settings remain focused.
+
+Guided setup reuses local prerequisites, a visible setup shortcut and the
+copyable official terminal command. It never inspects authentication or handles
+credentials. Native notifications use generic text, respect the user's toggle
+and the shell's DND behavior, keep initial polling quiet and suppress repeated
+passive states. They are observations, not proof of protection.
+
+Native dark/light, setup focus and Escape checks passed. Mock native checks
+covered saved targets, cancellation, unavailable servers, auth errors and a
+delayed worker; stale status and keyboard navigation remained usable. One
+layout correction kept Quick Connect out of other tabs. The real backend,
+original theme and exact plugin preferences were restored; no live VPN
+transition was performed. Captures stay private.

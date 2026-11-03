@@ -16,8 +16,8 @@ omarchy plugin add https://github.com/peteVo/cyberghost-omarchy-plugin.git --ena
 For an existing checkout, use `omarchy plugin update petevo.cyberghost` after
 reviewing and preserving local changes. The installer follows the default
 branch. For an unreleased candidate, test the exact pull-request head commit
-and confirm the reported version before connecting; do not label an older
-default-branch installation as 0.6. See [TESTING.md](TESTING.md).
+and confirm its reported version before connecting. Version 0.7 remains an
+experimental beta; fresh-machine validation is pending. See [TESTING.md](TESTING.md).
 
 Requirements: x86-64 Linux, Omarchy 4, its native Quickshell, NetworkManager and Python
 3.12+. The supported target is Omarchy 4; vanilla Arch with GNOME/KDE is not a
@@ -78,7 +78,11 @@ explicit action that contacts a third party and binds to the detected tunnel
 interface.
 
 The panel supports country, city, server, protocol, favorites and switching
-controls. A displayed connected label or location is reported state, not proof
+controls. Quick Connect uses the explicitly selected favorite, or the last
+successfully connected location when no favorite is selected. It rediscovers
+and validates saved locations before connecting; unavailable targets stop
+without substitution. Saved locations and notification preference stay local
+and are omitted from shareable diagnostics. A displayed connected label or location is reported state, not proof
 of provider identity, routed traffic, DNS/IPv6 protection or kill-switch
 enforcement. WireGuard is the recommended protocol. The optional kill switch
 starts full blocking only after connection, and intentional disconnect or
@@ -109,6 +113,23 @@ provider. A saved local profile alone does not prove its provider entry is usabl
   Approve authentication locally; never flush unrelated firewall tables.
 
 ## Evidence
+
+The 0.7 beta adds nullable tunnel and IPv4-route observations for
+the official CLI; manually selected NetworkManager profile routes remain
+unchecked. Status becomes stale after 45 seconds or a backward clock change.
+Protection verification and public IPv4 lookup are timestamped explicit
+checks, not continuous monitoring. Generic notifications can be disabled;
+initial polling is quiet, passive notices are deduplicated, and explicit
+operations can notify. The guided setup checklist uses existing prerequisites
+and offers a copyable official terminal command; it has no credential form or
+automatic package installation.
+
+On this host, native dark/light status, setup and focus/Escape checks passed.
+Native mock fixtures passed Quick Connect with specific-server and Any-city
+targets, unavailable-server rejection, cancellation, authentication failure,
+notification toggling and stale-status keyboard interaction. The real backend,
+original theme and plugin preferences were restored; no VPN transition was
+performed. See [TESTING.md](TESTING.md) for remaining validation.
 
 Bounded WireGuard testing on one ThinkPad passed DE-to-NL GUI switching,
 distinct tunnel-bound IPv4 results, DNS and dual-stack disconnect recovery,

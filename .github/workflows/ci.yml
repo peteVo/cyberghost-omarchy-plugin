@@ -36,5 +36,6 @@ jobs:
         run: |
           # Package integration tests skip unless CG_TEST_PACKAGE points to a local package artifact.
           python -m unittest discover -s tests -v
+          node --test tests/test_ui_logic.mjs
           python -m py_compile cg_bridge.py packaging/cyberghostvpn/omarchy-bridge
           bash -n tools/host-baseline.sh tools/build-client.sh
