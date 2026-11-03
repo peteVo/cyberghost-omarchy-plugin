@@ -255,6 +255,12 @@ Ui.BarWidget {
     selectionRevision++
     if (value) invoke("servers")
   }
+  function selectServer(value) {
+    if (working || protocolRefresh || value === selectedServer) return
+    cancelSavedTarget()
+    selectedServer = value
+    selectionRevision++
+  }
   function selectProtocol(value) {
     if (working || protocolRefresh || ["auto", "wireguard", "openvpn"].indexOf(value) < 0 || value === selectedProtocol) return
     cancelSavedTarget()

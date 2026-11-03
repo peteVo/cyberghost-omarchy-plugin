@@ -115,6 +115,7 @@ Ui.Panel {
     countryPicker.close()
     cityPicker.close()
     serverPicker.close()
+    quickTargetPicker.close()
     protocolPicker.close()
     backendPicker.close()
     root.controller.hide()
@@ -278,7 +279,7 @@ Ui.Panel {
           }
           Label {
             visible: root.section === "locations" && root.dynamicReady && !root.canDisconnect
-            text: root.vpn && root.vpn.quickTarget ? "Quick Connect · " + root.favoriteButtonLabel(root.vpn.quickTarget)
+            text: root.vpn && root.vpn.quickTarget ? "Quick Connect · " + root.favoriteLabel(root.vpn.quickTarget)
               : root.vpn && root.vpn.quickTargetKey ? "Quick Connect favorite unavailable. Choose another in Settings."
               : "Connect once or choose a favorite in Settings to enable Quick Connect."
             font.pixelSize: Style.font.bodySmall
@@ -385,7 +386,7 @@ Ui.Panel {
               options: [{ value: "", label: "Automatic server" }].concat(root.vpn ? root.vpn.servers.items.map(function(item) {
                 return { value: item.name, label: item.name, description: item.load === null || item.load === undefined ? item.city : "Load " + item.load + "%" }
               }) : [])
-              onChanged: function(value) { root.vpn.selectedServer = value }
+              onChanged: function(value) { root.vpn.selectServer(value) }
             }
             Label {
               text: root.vpn ? root.vpn.discovery.reason || root.vpn.cities.reason || root.vpn.servers.reason : ""
@@ -490,18 +491,24 @@ Ui.Panel {
             foreground: root.ink
             onClicked: { root.vpn.notifications = !root.vpn.notifications; root.vpn.persistSettings({ notifications: root.vpn.notifications }) }
           }
-          Ui.Dropdown {
+          Ui.SearchableDropdown {
+            id: quickTargetPicker
             objectName: "vpnQuickTarget"
             visible: root.dynamicReady
             width: parent.width
             label: "Quick Connect location"
             value: root.vpn ? root.vpn.quickTargetKey : ""
             options: [{ value: "", label: "Last successful location" }].concat(root.vpn ? root.vpn.favorites.filter(function(item) { return root.vpn.validTarget(item) }).map(function(item) {
-              return { value: root.vpn.favoriteKey(item), label: root.favoriteButtonLabel(item) }
+              return { value: root.vpn.favoriteKey(item), label: root.favoriteButtonLabel(item), description: item.server || "Automatic server" }
             }) : [])
             foreground: root.ink
             enabled: root.vpn && !root.vpn.working && !root.vpn.quickConnecting
             onChanged: function(value) { root.vpn.quickTargetKey = value; root.vpn.persistSettings({ quickTargetKey: value }) }
+          }
+          Label {
+            visible: root.dynamicReady && root.vpn && !!root.vpn.quickTarget
+            text: "Quick Connect target · " + (root.vpn && root.vpn.quickTarget ? root.favoriteLabel(root.vpn.quickTarget) : "")
+            font.pixelSize: Style.font.bodySmall
           }
           Action {
             objectName: "vpnForgetLastLocation"

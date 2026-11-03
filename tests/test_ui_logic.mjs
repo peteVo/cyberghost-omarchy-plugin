@@ -49,7 +49,7 @@ function widget() {
   };
   context.root = context;
   peers = [context];
-  for (const name of ['validTarget', 'favoriteKey', 'startSavedTarget', 'quickConnect', 'completeSavedTarget', 'cancelSavedTarget', 'cancelQuickConnect', 'notify', 'observeState', 'clearHealth', 'noteStateFailure', 'selectBackend', 'selectProfile', 'selectCountry', 'finish']) {
+  for (const name of ['validTarget', 'favoriteKey', 'startSavedTarget', 'quickConnect', 'completeSavedTarget', 'selectServer', 'cancelSavedTarget', 'cancelQuickConnect', 'notify', 'observeState', 'clearHealth', 'noteStateFailure', 'selectBackend', 'selectProfile', 'selectCountry', 'finish']) {
     vm.runInNewContext(functionSource(name), context);
   }
   return context;
@@ -193,6 +193,14 @@ test('cancellation and stale state prevent the deferred connection', () => {
   w2.snapshot.state = 'connected';
   w2.calls.later[0]();
   assert.deepEqual(w2.calls.invoke, ['countries']);
+
+  const w3 = widget();
+  w3.quickTarget = { country: 'DE', city: '', protocol: 'wireguard', server: '' };
+  w3.quickConnect();
+  w3.completeSavedTarget();
+  w3.selectServer('another-discovered-server');
+  w3.calls.later[0]();
+  assert.deepEqual(w3.calls.invoke, ['countries']);
 });
 
 test('only a confirmed dynamic connect or switch remembers a valid target', () => {

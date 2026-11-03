@@ -105,7 +105,8 @@ Node is test-only, not an application dependency. Real native dark/light
 status/setup and focus/Escape checks passed. Native mock fixtures passed
 specific-server and Any-city Quick Connect, unavailable-server rejection,
 cancellation, authentication failure without recording success, notification
-toggling, forgetting the saved last location, explicit verification timestamps
+toggling, distinguishing same-city favorites by searching server descriptions,
+forgetting the saved last location, explicit verification timestamps
 and disconnect invalidation, and stale-status navigation/Escape while a mock
 worker was delayed.
 The initial Escape assertion ran before the closing animation finished; an
