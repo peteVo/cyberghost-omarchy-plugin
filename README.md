@@ -16,9 +16,8 @@ omarchy plugin add https://github.com/peteVo/cyberghost-omarchy-plugin.git --ena
 For an existing checkout, use `omarchy plugin update petevo.cyberghost` after
 reviewing and preserving local changes. The installer follows the default
 branch. For an unreleased candidate, test the exact pull-request head commit
-and confirm its reported version before connecting. The 0.7 work on
-`feat/everyday-use-0.7` is pending and is not merged or released. See
-[TESTING.md](TESTING.md).
+and confirm its reported version before connecting. Version 0.7 remains an
+experimental beta; fresh-machine validation is pending. See [TESTING.md](TESTING.md).
 
 Requirements: x86-64 Linux, Omarchy 4, its native Quickshell, NetworkManager and Python
 3.12+. The supported target is Omarchy 4; vanilla Arch with GNOME/KDE is not a
@@ -115,7 +114,7 @@ provider. A saved local profile alone does not prove its provider entry is usabl
 
 ## Evidence
 
-The pending 0.7 candidate adds nullable tunnel and IPv4-route observations for
+The 0.7 beta adds nullable tunnel and IPv4-route observations for
 the official CLI; manually selected NetworkManager profile routes remain
 unchecked. Status becomes stale after 45 seconds or a backward clock change.
 Protection verification and public IPv4 lookup are timestamped explicit

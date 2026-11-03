@@ -1,7 +1,7 @@
-# Test the 0.7 candidate
+# Test the 0.7 beta
 
-The 0.7 candidate on `feat/everyday-use-0.7` is pending and is not merged or
-released. Wider-machine validation remains pending. When testing an unreleased
+Wider-machine validation of the 0.7 beta remains pending. Record the exact
+release tag and full commit SHA when testing a release. When testing an unreleased
 candidate, test only the exact pull request head commit: record its full SHA from GitHub, fetch
 that commit into a disposable Omarchy 4 VM, and confirm `git rev-parse HEAD`
 matches before testing. Do not report an unqualified default-branch install as
