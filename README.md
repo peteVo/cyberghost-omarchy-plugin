@@ -16,8 +16,8 @@ omarchy plugin add https://github.com/peteVo/cyberghost-omarchy-plugin.git --ena
 For an existing checkout, use `omarchy plugin update petevo.cyberghost` after
 reviewing and preserving local changes. The installer follows the default
 branch. For an unreleased candidate, test the exact pull-request head commit
-and confirm its reported version before connecting. The 0.8.0-beta.1 candidate
-is on `feat/recovery-0.8` and is not merged. See [TESTING.md](TESTING.md).
+and confirm its reported version before connecting. See [TESTING.md](TESTING.md)
+for the 0.8 beta evidence and remaining validation.
 
 Requirements: x86-64 Linux, Omarchy 4, its native Quickshell, NetworkManager and Python
 3.12+. The supported target is Omarchy 4; vanilla Arch with GNOME/KDE is not a
