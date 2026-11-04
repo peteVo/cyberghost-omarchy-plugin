@@ -16,7 +16,9 @@ function widget() {
   let context;
   let peers;
   context = {
-    Date: { now: () => 100_000 },
+    now: 100_000,
+    Date: { now: () => context.now },
+    runner: '/plugin/cg_bridge.py', profileName: 'cyberghost',
     Quickshell: { execDetached: args => calls.notify.push(args) },
     Qt: { callLater: fn => calls.later.push(fn) },
     settings: {}, moduleName: 'test', bar: { moduleWidgets: () => peers },
@@ -31,6 +33,11 @@ function widget() {
     setupChecks: [], setupMessage: '',
     panelLoader: { item: null },
     notifications: true, observedState: '', statusFailed: false,
+    opened: false,
+    recoveryEnabled: false, recoveryArmed: false, recoveryInFlight: false,
+    recoveryTarget: null, recoveryAttempts: 0, recoveryRevision: 0, recoveryIndex: 0,
+    recoveryKillSwitch: false, recoveryNextAt: 0, recoveryLastClock: 0,
+    recoveryMessage: 'Off', statusStale: false, uplink_ready: true,
     lastStatusAt: 0, verificationAt: 0, publicIpAt: 0,
     protectionCheck: '', publicIp: '', clockNow: 100_000, message: '',
     discovery: { items: [], reason: '' }, cities: { items: [], reason: '' },
@@ -49,7 +56,7 @@ function widget() {
   };
   context.root = context;
   peers = [context];
-  for (const name of ['validTarget', 'favoriteKey', 'startSavedTarget', 'quickConnect', 'completeSavedTarget', 'selectServer', 'cancelSavedTarget', 'cancelQuickConnect', 'notify', 'observeState', 'clearHealth', 'noteStateFailure', 'selectBackend', 'selectProfile', 'selectCountry', 'finish']) {
+  for (const name of ['validTarget', 'favoriteKey', 'startSavedTarget', 'quickConnect', 'completeSavedTarget', 'selectServer', 'cancelSavedTarget', 'cancelQuickConnect', 'notify', 'observeState', 'observeRecovery', 'recoverableState', 'setRecovery', 'stopRecovery', 'clearHealth', 'noteStateFailure', 'selectBackend', 'selectProfile', 'selectCountry', 'arrayFrom', 'finish']) {
     vm.runInNewContext(functionSource(name), context);
   }
   return context;
@@ -63,11 +70,11 @@ function finish(w, task, data) {
   w.finish();
 }
 
-function fail(w, task, error) {
+function fail(w, task, error, code) {
   w.pending = task;
   w.awaiting = true;
   w.helperExit = 1;
-  w.output.text = JSON.stringify({ ok: false, error });
+  w.output.text = JSON.stringify({ ok: false, error, ...(code ? { code } : {}) });
   w.finish();
 }
 
@@ -312,4 +319,241 @@ test('status age becomes stale at 45 seconds and when the clock moves backwards'
   assert.equal(stale(), true);
   w.lastStatusAt = 100_001;
   assert.equal(stale(), true);
+});
+
+test('session recovery defaults off and arms only after an explicit successful WireGuard operation', () => {
+  const w = widget();
+  assert.equal(w.recoveryEnabled, false);
+  assert.equal(w.recoveryArmed, false);
+  w.setRecovery(true);
+  assert.equal(w.recoveryEnabled, true);
+  assert.equal(w.recoveryArmed, false);
+
+  w.pendingCountry = 'NL'; w.pendingCity = 'Amsterdam'; w.selectedProtocol = 'wireguard';
+  w.selectedServer = 'nl-ams-s1'; w.killSwitch = true;
+  w.observeState({ state: 'connected', protocol: 'WireGuard', device: 'cyberghost',
+    interface_index: 23, ipv6_guard: true, kill_switch: true }, 'connect');
+  assert.equal(w.recoveryArmed, true);
+  assert.deepEqual(plain(w.recoveryTarget), {
+    country: 'NL', city: 'Amsterdam', protocol: 'wireguard', server: 'nl-ams-s1',
+  });
+  assert.equal(w.recoveryIndex, 23);
+  assert.equal(w.recoveryKillSwitch, true);
+  assert.equal(w.recoveryAttempts, 0);
+
+  const noAuth = widget();
+  noAuth.recoveryEnabled = true;
+  noAuth.pendingCountry = 'DE'; noAuth.selectedProtocol = 'openvpn';
+  noAuth.observeState({ state: 'connected', protocol: 'OpenVPN', interface_index: 8 }, 'connect');
+  assert.equal(noAuth.recoveryArmed, false);
+});
+
+test('recovery preserves its frozen target and invokes only the normal connect task', () => {
+  const w = widget();
+  w.recoveryEnabled = true; w.recoveryArmed = true;
+  w.recoveryTarget = { country: 'NL', city: 'Amsterdam', protocol: 'wireguard', server: 'nl-ams-s1' };
+  w.recoveryKillSwitch = true;
+  w.snapshot = { state: 'disconnected', can_connect: true, uplink_ready: true };
+  w.setupReady = true; w.statusStale = false; w.statusFailed = false;
+  w.profileName = 'cyberghost'; w.runner = '/plugin/cg_bridge.py';
+  w.process = { running: false };
+  vm.runInNewContext(functionSource('invoke'), w);
+
+  w.selectedCountry = 'DE'; w.selectedCity = ''; w.selectedProtocol = 'openvpn'; w.selectedServer = '';
+  w.invoke('recover');
+  assert.equal(w.recoveryAttempts, 1);
+  assert.equal(w.recoveryInFlight, true);
+  assert.deepEqual(plain(w.process.command), [
+    '/usr/bin/python3', '/plugin/cg_bridge.py', 'connect', '--backend', 'official-cli',
+    '--profile', 'cyberghost', '--protocol', 'wireguard', '--country', 'NL',
+    '--city', 'Amsterdam', '--server', 'nl-ams-s1', '--kill-switch',
+  ]);
+});
+
+test('manual disconnect and recovery toggle cancel queued recovery', () => {
+  for (const cancel of [w => w.invoke('disconnect'), w => w.setRecovery(false)]) {
+    const w = widget();
+    w.recoveryEnabled = true; w.recoveryArmed = true;
+    w.recoveryTarget = { country: 'DE', city: '', protocol: 'wireguard', server: '' };
+    w.recoveryNextAt = 70_000;
+    w.snapshot = { state: 'disconnected', can_connect: true, uplink_ready: true };
+    w.setupReady = true; w.statusStale = false;
+    vm.runInNewContext(functionSource('invoke'), w);
+    w.lastStatusAt = 99_000; w.clockNow = 100_000;
+    w.observeRecovery({ state: 'disconnected', can_connect: true, uplink_ready: true }, 'status');
+    assert.equal(w.calls.later.length, 1);
+    cancel(w);
+    w.calls.later[0]();
+    assert.equal(w.calls.invoke.includes('recover'), false);
+  }
+});
+
+test('recovery keeps a surviving tunnel and waits for uplink, fresh status, and its delay', () => {
+  const w = widget();
+  w.recoveryEnabled = true; w.recoveryArmed = true; w.recoveryIndex = 23;
+  w.recoveryTarget = { country: 'DE', city: '', protocol: 'wireguard', server: '' };
+  w.snapshot = { state: 'waiting-network', can_connect: false, interface_index: 23 };
+  w.observeRecovery({ state: 'waiting-network', interface_index: 23 }, 'status');
+  assert.equal(w.recoveryArmed, true);
+  assert.match(w.recoveryMessage, /Keeping the existing tunnel/);
+  assert.equal(w.calls.later.length, 0);
+
+  w.snapshot = { state: 'disconnected', can_connect: true, uplink_ready: false };
+  w.observeRecovery({ state: 'disconnected', can_connect: true, uplink_ready: false }, 'status');
+  assert.equal(w.calls.later.length, 0);
+  assert.equal(w.recoveryAttempts, 0);
+
+  w.snapshot = { state: 'disconnected', can_connect: true, uplink_ready: true };
+  w.lastStatusAt = 99_000; w.clockNow = 100_000;
+  w.observeRecovery({ state: 'disconnected', can_connect: true, uplink_ready: true }, 'status');
+  assert.equal(w.calls.later.length, 0);
+  w.now += 15_000;
+  w.observeRecovery({ state: 'disconnected', can_connect: true, uplink_ready: true }, 'status');
+  assert.equal(w.calls.later.length, 0);
+  w.now += 15_000;
+  w.observeRecovery({ state: 'disconnected', can_connect: true, uplink_ready: true }, 'status');
+  assert.equal(w.calls.later.length, 1);
+  w.statusStale = true;
+  w.calls.later.shift()();
+  assert.equal(w.calls.invoke.includes('recover'), false);
+  w.statusStale = false;
+  w.observeRecovery({ state: 'disconnected', can_connect: true, uplink_ready: true }, 'status');
+  w.calls.later.shift()();
+  assert.deepEqual(w.calls.invoke, ['recover']);
+});
+
+test('recovery stops on blocked or protection-owned state and caps the session at two attempts', () => {
+  for (const data of [
+    { state: 'blocked', can_connect: false },
+    { state: 'disconnected', can_connect: true, can_release_protection: true, uplink_ready: true },
+  ]) {
+    const w = widget();
+    w.recoveryEnabled = true; w.recoveryArmed = true;
+    w.recoveryTarget = { country: 'DE', city: '', protocol: 'wireguard', server: '' };
+    w.observeRecovery(data, 'status');
+    assert.equal(w.recoveryArmed, false);
+    assert.equal(w.calls.later.length, 0);
+  }
+
+  const w = widget();
+  w.recoveryEnabled = true; w.recoveryArmed = true;
+  w.recoveryTarget = { country: 'DE', city: '', protocol: 'wireguard', server: '' };
+  w.snapshot = { state: 'disconnected', can_connect: true, uplink_ready: true };
+  w.setupReady = true; w.statusStale = false;
+  w.runner = '/plugin/cg_bridge.py';
+  vm.runInNewContext(functionSource('invoke'), w);
+  w.invoke('recover'); w.awaiting = false; w.process.running = false;
+  w.invoke('recover'); w.awaiting = false; w.process.running = false;
+  w.invoke('recover');
+  assert.equal(w.recoveryAttempts, 2);
+  assert.equal(w.calls.invoke.length, 0);
+  assert.equal(w.process.command[2], 'connect');
+});
+
+test('successful recovery does not reset its per-connection attempt budget', () => {
+  const w = widget();
+  w.recoveryEnabled = true; w.recoveryArmed = true; w.recoveryAttempts = 1;
+  w.recoveryIndex = 23;
+  w.observeRecovery({ state: 'connected', protocol: 'WireGuard', device: 'cyberghost',
+    interface_index: 23, ipv6_guard: true }, 'recover');
+  assert.equal(w.recoveryArmed, true);
+  assert.equal(w.recoveryAttempts, 1);
+  assert.equal(w.recoveryInFlight, false);
+});
+
+test('recovery refuses malformed tunnel identity or an unrecorded protection guard', () => {
+  for (const fields of [
+    { interface_index: 0 },
+    { interface_index: 2.5 },
+    { interface_index: Number.NaN },
+    { interface_index: 23, ipv6_guard: false },
+    { interface_index: 23, ipv6_guard: true, device: 'other' },
+  ]) {
+    const w = widget();
+    w.recoveryEnabled = true;
+    w.pendingCountry = 'DE'; w.selectedProtocol = 'wireguard';
+    w.observeRecovery({ state: 'connected', protocol: 'WireGuard', device: 'cyberghost',
+      interface_index: 23, ipv6_guard: true, ...fields }, 'connect');
+    assert.equal(w.recoveryArmed, false, JSON.stringify(fields));
+    assert.equal(w.recoveryTarget, null);
+  }
+});
+
+test('recovery retries only a generic operation failure and stops on auth or uncertain failures', () => {
+  for (const code of ['authentication', 'authorization', 'timeout', 'busy', 'unconfirmed', 'conflict']) {
+    const w = widget();
+    w.recoveryAttempts = 1; w.recoveryArmed = true; w.recoveryInFlight = true;
+    fail(w, 'recover', 'generic sanitized error', code);
+    assert.equal(w.recoveryArmed, false, code);
+  }
+  const retry = widget();
+  retry.recoveryAttempts = 1; retry.recoveryArmed = true; retry.recoveryInFlight = true;
+  retry.pending = 'recover'; retry.awaiting = true; retry.helperExit = 1;
+  retry.output.text = JSON.stringify({ ok: false, code: 'operation_failed', error: 'Connection failed.' });
+  retry.finish();
+  assert.equal(retry.recoveryArmed, true);
+  assert.equal(retry.recoveryInFlight, false);
+  assert.equal(retry.recoveryNextAt, 160_000);
+});
+
+test('update failure preserves the last observed connection state', () => {
+  const w = widget();
+  w.snapshot = { state: 'connected', device: 'cyberghost' };
+  w.releaseInfo = { tag: 'v1.0.0' };
+  fail(w, 'updates', 'Update information is unavailable.');
+  assert.equal(w.snapshot.state, 'connected');
+  assert.equal(w.releaseInfo, null);
+});
+
+test('version report accepts only nullable helper API 4, 5 or 6', () => {
+  const base = {
+    schema: 1, plugin_version: '0.8.0', python_version: '3.12.1', platform: 'linux',
+    backend: 'official-cli', packages: {}, prerequisites: [],
+  };
+  for (const api of [null, 4, 5, 6]) {
+    const w = widget();
+    w.backendMode = 'official-cli';
+    finish(w, 'check', { state: 'disconnected', can_connect: true, can_disconnect: false,
+      setup_ready: true, prerequisites: [], report: { ...base, helper_api: api } });
+    assert.equal(w.versionReport.helper_api, api);
+    assert.equal(w.snapshot.state, 'disconnected');
+  }
+  const bad = widget();
+  bad.backendMode = 'official-cli';
+  finish(bad, 'check', { state: 'disconnected', can_connect: true, can_disconnect: false,
+    setup_ready: true, prerequisites: [], report: { ...base, helper_api: 7 } });
+  assert.equal(bad.snapshot.state, 'unknown');
+});
+
+test('guarded recovery retains the exact prior tunnel generation and uses the distinct backend action', () => {
+  const w = widget();
+  w.recoveryEnabled = true; w.recoveryArmed = true; w.recoveryIndex = 23;
+  w.recoveryTarget = { country: 'DE', city: 'Frankfurt', protocol: 'wireguard', server: 'frankfurt-s1-i01' };
+  w.snapshot = { state: 'recovery-required', can_recover: true, can_connect: false,
+    protection_phase: 'active', protection_index: 23, kill_switch: false,
+    can_release_protection: true, uplink_ready: true, error: 'Tunnel absent.' };
+  w.recoveryNextAt = 70_000;
+  w.observeRecovery(w.snapshot, 'status');
+  assert.equal(w.recoveryArmed, true);
+  assert.equal(w.calls.later.length, 1);
+  w.calls.later.shift()();
+  assert.deepEqual(w.calls.invoke, ['recover']);
+  vm.runInNewContext(functionSource('invoke'), w);
+  w.invoke('recover');
+  assert.equal(w.process.command[2], 'recover');
+  assert.equal(w.recoveryAttempts, 1);
+  assert.equal(w.process.command.includes('--kill-switch'), false);
+});
+
+test('guarded recovery pauses for a full block, changed generation or untrusted guard stage', () => {
+  for (const fields of [{ kill_switch: true }, { protection_index: 24 },
+    { protection_phase: 'prepared' }, { can_recover: false }]) {
+    const w = widget();
+    w.recoveryEnabled = true; w.recoveryArmed = true; w.recoveryIndex = 23;
+    w.observeRecovery({ state: 'recovery-required', can_recover: true, can_connect: false,
+      protection_phase: 'active', protection_index: 23, kill_switch: false,
+      can_release_protection: true, uplink_ready: true, error: 'Tunnel absent.', ...fields }, 'status');
+    assert.equal(w.recoveryArmed, false, JSON.stringify(fields));
+    assert.equal(w.calls.later.length, 0);
+  }
 });

@@ -39,6 +39,7 @@ Ui.Panel {
   readonly property bool canDisconnect: vpn && vpn.snapshot.can_disconnect === true
   readonly property bool dynamicReady: vpn && vpn.dynamicMode
   readonly property bool canSwitch: dynamicReady && connected && canDisconnect && targetReady()
+    && vpn.snapshot.can_switch === true && vpn.selectedProtocol === "wireguard" && !vpn.killSwitch && vpn.snapshot.kill_switch !== true
   onOpenedChanged: if (opened && vpn && !vpn.working) vpn.refresh()
 
   function targetReady() {
@@ -106,6 +107,9 @@ Ui.Panel {
   }
   function revealReport() {
     Qt.callLater(function() { if (root.opened && reportScroll.visible) root.revealFocus(reportScroll) })
+  }
+  function revealUpdates() {
+    Qt.callLater(function() { if (root.opened && releaseStatusLabel.visible) root.revealFocus(releaseStatusLabel) })
   }
 
   function open() {
@@ -245,7 +249,7 @@ Ui.Panel {
             objectName: "vpnSetupShortcut"
             visible: root.vpn && !root.vpn.setupReady
             text: "Complete setup"
-            onClicked: root.selectSection("settings")
+            onClicked: { root.selectSection("settings"); Qt.callLater(function() { root.revealFocus(setupHeader) }) }
           }
           Label {
             visible: root.dynamicReady
@@ -258,8 +262,12 @@ Ui.Panel {
             font.pixelSize: Style.font.bodySmall
           }
           Label {
-            visible: root.vpn && root.vpn.pending === "switch" && root.vpn.snapshot.kill_switch === true
-            text: "Switching temporarily releases the traffic block."
+            visible: root.dynamicReady && root.canDisconnect
+            text: root.vpn && (root.vpn.snapshot.kill_switch === true || root.vpn.killSwitch)
+              ? "Full kill-switch switching is unavailable. The block is retained; disconnect deliberately before starting a new connection."
+              : root.vpn && root.vpn.snapshot.can_switch === true && root.vpn.selectedProtocol === "wireguard"
+              ? "Switching retains IPv6 guarding. IPv4 and resolver bootstrap DNS can leave during the transition."
+              : "Switching needs helper API 5 and an active IPv6-guarded WireGuard session. Disconnect before changing protocols."
             font.pixelSize: Style.font.bodySmall
           }
           Label {
@@ -483,6 +491,70 @@ Ui.Panel {
             spacing: Style.spacing.controlGap
             Ui.PanelSeparator { foreground: root.ink }
             Ui.PanelSectionHeader { text: "Settings & diagnostics"; foreground: root.ink }
+          Ui.PanelSectionHeader { text: "Recovery"; foreground: root.ink }
+          Ui.Toggle {
+            objectName: "vpnRecoveryToggle"
+            visible: root.dynamicReady
+            width: parent.width
+            label: "Recovery for this shell session"
+            checked: root.vpn && root.vpn.recoveryEnabled
+            enabled: root.vpn && !root.vpn.working
+            foreground: root.ink
+            onClicked: root.vpn.setRecovery(!root.vpn.recoveryEnabled)
+          }
+          Label {
+            visible: root.dynamicReady
+            text: root.vpn ? root.vpn.recoveryMessage : "Off"
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label {
+            visible: root.dynamicReady
+            text: "Enable before connecting. Keeps an existing tunnel while waiting for Wi-Fi, then allows up to two reconnect attempts only after fresh safe status. Authorization may be required. Disconnects and selection changes cancel recovery. Guarded retries require helper API 6 and the same confirmed target; a full traffic block needs manual recovery. Disable before managing the VPN elsewhere."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Ui.PanelSectionHeader { text: "Installed versions"; foreground: root.ink }
+          Label {
+            text: root.vpn && root.vpn.versionReport ? "Plugin · " + root.vpn.versionReport.plugin_version
+              + "\nHelper API · " + (root.vpn.versionReport.helper_api || "Unavailable") : "Use Refresh diagnostics to check installed versions."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label {
+            visible: root.vpn && !!root.vpn.versionReport
+            text: root.vpn && root.vpn.versionReport ? "Client package · "
+              + (root.vpn.versionReport.packages["cyberghostvpn-omarchy"] || root.vpn.versionReport.packages.cyberghostvpn || "Not found") : ""
+            font.pixelSize: Style.font.bodySmall
+          }
+          Action {
+            objectName: "vpnCheckUpdates"
+            text: root.vpn && root.vpn.pending === "updates" ? "Checking GitHub releases…" : "Check for updates"
+            enabled: root.vpn && !root.vpn.working
+            onClicked: root.vpn.invoke("updates")
+          }
+          Label {
+            id: releaseStatusLabel
+            visible: root.vpn && root.vpn.updatesCheckedAt > 0
+            text: root.vpn && root.vpn.releaseInfo ? "Published · " + root.vpn.releaseInfo.tag + (root.vpn.releaseInfo.prerelease ? " · Prerelease" : "")
+              + "\nChecked · " + root.vpn.ageLabel(root.vpn.updatesCheckedAt) : "No published release returned."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Action {
+            objectName: "vpnReleaseNotes"
+            text: "Release notes"
+            onClicked: Qt.openUrlExternally(root.vpn && root.vpn.releaseInfo ? root.vpn.releaseInfo.url : "https://github.com/peteVo/cyberghost-omarchy-plugin/releases")
+          }
+          Ui.TextField {
+            objectName: "vpnUpdateCommand"
+            width: parent.width
+            readOnly: true
+            selectByMouse: true
+            foreground: root.ink
+            text: "omarchy plugin update petevo.cyberghost"
+            Accessible.name: "Plugin update command; preserve local edits and run in your local terminal"
+          }
+          Label {
+            text: "Update checks contact GitHub only when requested. Review release notes and preserve local edits before updating. Client-package updates remain a separate reviewed installation."
+            font.pixelSize: Style.font.bodySmall
+          }
           Ui.Toggle {
             objectName: "vpnNotifications"
             width: parent.width
@@ -553,7 +625,7 @@ Ui.Panel {
             enabled: root.vpn && !root.vpn.working
             onClicked: root.vpn.refresh()
           }
-          Ui.PanelSectionHeader { text: "Setup checklist"; foreground: root.ink }
+          Ui.PanelSectionHeader { id: setupHeader; text: "Setup checklist"; foreground: root.ink }
           Label {
             text: !root.vpn || !root.vpn.setupChecks.length ? "Checking local prerequisites…"
               : root.vpn.setupReady ? (root.dynamicReady ? "System checks passed. Complete local authentication, then connect."
@@ -655,7 +727,7 @@ Ui.Panel {
           }
           Label {
             visible: root.dynamicReady
-            text: "Starts after connection. Unexpected tunnel loss retains the block. Disconnects and location switches release it."
+            text: "Starts after connection. Unexpected tunnel loss retains the block. Disconnect releases it; full kill-switch location switches are refused."
             font.pixelSize: Style.font.bodySmall
           }
           Label {
@@ -688,7 +760,7 @@ Ui.Panel {
             text: "Releasing the block allows normal networking without disconnecting other VPNs."
             font.pixelSize: Style.font.bodySmall
           }
-          Label { text: "Automatic server reconnection is unavailable. Preferences and favorites are saved locally."; font.pixelSize: Style.font.bodySmall }
+          Label { text: "Recovery is session-only, never enabled at login. Preferences and favorites are saved locally."; font.pixelSize: Style.font.bodySmall }
         }
       }
     }

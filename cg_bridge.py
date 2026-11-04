@@ -86,16 +86,25 @@ def safe_vendor_binary():
             or safe_system_binary("/usr/local/bin/cyberghostvpn"))
 
 
-def privileged_command(vendor, *, require_api=True):
+def helper_api():
+    launcher = safe_system_binary("/usr/local/cyberghost/omarchy-bridge")
+    if not launcher:
+        return None
+    try:
+        match = re.fullmatch(r"omarchy-bridge ([456])", run([launcher, "--version"], timeout=3).strip())
+        return int(match[1]) if match else None
+    except BridgeError:
+        return None
+
+
+def privileged_command(vendor, *, require_api=True, min_api=4):
     launcher = safe_system_binary("/usr/local/cyberghost/omarchy-bridge")
     if vendor != "/usr/local/cyberghost/cyberghostvpn" or not launcher:
         raise BridgeError("GUI authorization requires the reviewed CyberGhost compatibility package. Install it or select a valid OpenVPN profile in Settings.", "dependency")
     if require_api:
-        try:
-            if run([launcher, "--version"], timeout=3).strip() != "omarchy-bridge 4":
-                raise ValueError
-        except (BridgeError, ValueError) as exc:
-            raise BridgeError("Install the reviewed cyberghostvpn-omarchy package with helper API 4 (legacy cyberghostvpn 1.5.0-7 also works) before changing connections.", "dependency") from exc
+        if (helper_api() or 0) < min_api:
+            raise BridgeError("Install the reviewed cyberghostvpn-omarchy package with helper API " + str(min_api)
+                              + ". Connecting needs API 4, switching API 5 and guarded recovery API 6.", "dependency")
     return ["/usr/bin/pkexec", launcher]
 
 
@@ -153,7 +162,7 @@ def prerequisites(backend):
     return checks
 
 
-def diagnostics(backend):
+def diagnostics(backend, checks=None):
     """Shareable allowlist: no vendor execution, account files or network requests."""
     if backend not in BACKENDS:
         raise ValueError("Select a supported backend")
@@ -174,11 +183,38 @@ def diagnostics(backend):
         match = re.fullmatch(re.escape(name) + r" ([0-9][A-Za-z0-9.+_:~\-]{0,63})", value)
         if match:
             packages[name] = match[1]
-    return {"schema": 1, "plugin_version": version,
+    return {"schema": 1, "plugin_version": version, "helper_api": helper_api(),
             "python_version": ".".join(str(n) for n in sys.version_info[:3]),
             "platform": "linux" if sys.platform == "linux" else "unsupported",
             "backend": backend, "packages": packages,
-            "prerequisites": [{"id": item["id"], "ready": item["ready"]} for item in prerequisites(backend)]}
+            "prerequisites": [{"id": item["id"], "ready": item["ready"]} for item in (prerequisites(backend) if checks is None else checks)]}
+
+
+def updates():
+    """Explicit anonymous metadata request; never downloads or executes code."""
+    output = run(["/usr/bin/curl", "--disable", "--proto", "=https", "--silent", "--show-error", "--fail",
+                  "--connect-timeout", "3", "--max-time", "8", "--max-filesize", "100000",
+                  "https://api.github.com/repos/peteVo/cyberghost-omarchy-plugin/releases?per_page=5"], timeout=10)
+    try:
+        releases = json.loads(output)
+        if not isinstance(releases, list):
+            raise ValueError
+        for item in releases:
+            if (not isinstance(item, dict) or type(item.get("draft")) is not bool
+                    or type(item.get("prerelease")) is not bool):
+                raise ValueError
+            if item["draft"]:
+                continue
+            tag = item.get("tag_name")
+            if not isinstance(tag, str) or not re.fullmatch(r"v[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(?:-beta\.[0-9]{1,4})?", tag):
+                raise ValueError
+            url = "https://github.com/peteVo/cyberghost-omarchy-plugin/releases/tag/" + tag
+            if item.get("html_url") != url:
+                raise ValueError
+            return {"release": {"tag": tag, "url": url, "prerelease": item["prerelease"]}}
+        return {"release": None}
+    except (ValueError, TypeError) as exc:
+        raise BridgeError("GitHub returned unrecognized release information. Open the project releases page locally.", "invalid_response") from exc
 
 
 def parse_countries(output):
@@ -371,7 +407,7 @@ def state_file():
     return root / "connection.json"
 
 
-def saved_details(snapshot):
+def saved_details(snapshot, *, target_only=False):
     try:
         path = state_file()
         info = path.lstat()
@@ -391,6 +427,11 @@ def saved_details(snapshot):
         if saved.get("city"): validate_name(saved["city"])
         server = saved.get("server", "")
         if server and not SERVER_RE.fullmatch(server): return {}
+        if target_only:
+            requested = saved.get("requested_server")
+            if not isinstance(requested, str) or (requested and not SERVER_RE.fullmatch(requested)):
+                return {}
+            return {"country": saved["country"], "city": saved.get("city", ""), "server": requested}
         return {"country": saved["country"], "city": saved.get("city", ""),
                 "location": saved["country"] + (" · " + saved["city"] if saved.get("city") else ""),
                 "location_source": "requested", "server": server, "server_source": saved.get("server_source", "requested"),
@@ -402,7 +443,7 @@ def saved_details(snapshot):
 def save_details(snapshot, country, city, server, output, known_servers=()):
     candidates = set(re.findall(r"\b[a-z][a-z0-9-]*-s[0-9]+-i[0-9]+\b", output)) & set(known_servers)
     reported = next(iter(candidates)) if len(candidates) == 1 else ""
-    record = {"country": country, "city": city, "server": reported or server,
+    record = {"country": country, "city": city, "server": reported or server, "requested_server": server,
               "server_source": "client" if reported else "requested", "device": snapshot.get("device"),
               "interface_index": snapshot.get("interface_index"), "protocol": snapshot.get("protocol"),
               "started": time.monotonic(), "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip()}
@@ -423,6 +464,8 @@ def status(profile, backend="manual-profile"):
               "location": "", "server": "", "protocol": "", "device": "",
               "tunnel_detected": None, "ipv4_route": None,
               "verified": False, "can_connect": False, "can_disconnect": False}
+    result["can_switch"] = False
+    result["can_recover"] = False
     try:
         protection = traffic_protection()
         if protection:
@@ -462,6 +505,7 @@ def status(profile, backend="manual-profile"):
                 if protection:
                     if protection["phase"] == "active" and protection["interface_index"] == result.get("interface_index"):
                         result.update(ipv6_guard=True, kill_switch=protection["kill_switch"])
+                        result["can_switch"] = result["state"] == "connected" and not protection["kill_switch"] and (helper_api() or 0) >= 5
                         if result["state"] == "unknown":
                             result.update(state="recovery-required",
                                           error="The tunnel has no usable internet route. Disconnect and reconnect, or choose another location.")
@@ -475,6 +519,7 @@ def status(profile, backend="manual-profile"):
                         and result.get("ipv6_guard") and protection and protection["phase"] == "active")) and not uplink_ready():
                     result.update(state="waiting-network", warning="Waiting for an upstream network. WireGuard can retry when it returns.")
                     result.pop("error", None)
+                    result["can_switch"] = False
                 try:
                     result["ipv6_disabled"] = Path("/proc/sys/net/ipv6/conf/all/disable_ipv6").read_text().strip() == "1"
                 except OSError:
@@ -488,10 +533,14 @@ def status(profile, backend="manual-profile"):
                               error="Setup was interrupted before protection was confirmed. Restore normal networking before retrying."
                               if protection["phase"] == "prepared" else
                               "The tunnel is absent. Disconnect to release its traffic protection and restore normal networking.")
+                if protection["phase"] == "active" and not protection["kill_switch"] and helper_api() == 6:
+                    result.update(can_recover=True, protection_index=protection["interface_index"],
+                                  uplink_ready=uplink_ready())
                 return result
             output = run([vendor, "--status"], timeout=8).strip().lower()
             if re.search(r"\bnot connected\b|\bdisconnected\b|\bno vpn connection", output):
                 result.update(state="disconnected", can_connect=True, tunnel_detected=False, ipv4_route=False)
+                result["uplink_ready"] = uplink_ready()
             elif re.search(r"\bconnecting\b", output):
                 result["state"] = "connecting"
             elif re.search(r"(?m)^\s*(?:vpn )?(?:connected|connection established|connection found)[.!]?\s*$", output):
@@ -531,11 +580,11 @@ def locations(kind, country="", backend="manual-profile", city="", protocol="aut
 
 
 def operate(action, country, city, profile, backend="manual-profile", protocol="auto", server="", kill_switch=False):
-    if action not in ("connect", "disconnect", "switch", "release-protection") or protocol not in PROTOCOLS:
+    if action not in ("connect", "recover", "disconnect", "switch", "release-protection") or protocol not in PROTOCOLS:
         raise ValueError("Unsupported VPN operation or protocol")
     if kill_switch and (backend != "official-cli" or protocol != "wireguard"):
         raise ValueError("The kill switch requires the official CLI with WireGuard")
-    if action in ("connect", "switch"):
+    if action in ("connect", "recover", "switch"):
         failed = next((item for item in prerequisites(backend) if not item["ready"]), None)
         if failed:
             raise BridgeError(failed["label"] + ": " + failed["message"], "setup")
@@ -552,7 +601,7 @@ def operate(action, country, city, profile, backend="manual-profile", protocol="
     if backend == "manual-profile":
         if traffic_protection():
             raise BridgeError("Release Official CLI traffic protection before using another backend.", "conflict")
-        if action == "switch":
+        if action in ("switch", "recover"):
             raise ValueError("Location switching requires the official CLI backend")
         uuid = profile_info(profile)
         rows = active_connections()
@@ -574,39 +623,60 @@ def operate(action, country, city, profile, backend="manual-profile", protocol="
             raise BridgeError("A session or traffic block already exists. Use Switch location, or disconnect and refresh before connecting.", "conflict")
         output = ""
         known_servers = set()
-        if action in ("connect", "switch"):
+        if action in ("connect", "recover", "switch"):
             validate_code(country)
-            if country not in {item["code"] for item in locations("countries", backend=backend, protocol=protocol)["items"]}:
+            if action == "recover":
+                current = status(profile, backend)
+                protection = traffic_protection()
+                if (kill_switch or protocol != "wireguard" or current.get("can_recover") is not True
+                        or current.get("uplink_ready") is not True or not protection):
+                    raise BridgeError("Guarded recovery needs an absent tunnel, an upstream route and owned IPv6-only protection.", "protection")
+                previous = saved_details({"state": "connected", "device": "cyberghost", "protocol": "WireGuard",
+                                          "interface_index": protection["interface_index"]}, target_only=True)
+                if previous != {"country": country, "city": city, "server": server}:
+                    raise BridgeError("The retry target does not match the last confirmed connection. Reconnect manually.", "unconfirmed")
+                privileged_command(vendor, min_api=6)
+            elif country not in {item["code"] for item in locations("countries", backend=backend, protocol=protocol)["items"]}:
                 raise ValueError("Select a country returned by the official CLI")
             argv = launcher + ["--traffic", "--country-code", country]
             if city:
                 validate_name(city)
-                if city not in locations("cities", country, backend, protocol=protocol)["items"]:
+                if action != "recover" and city not in locations("cities", country, backend, protocol=protocol)["items"]:
                     raise ValueError("Select a city returned by the official CLI")
                 argv += ["--city", city]
-                known_servers = {item["name"] for item in locations("servers", country, backend, city, protocol)["items"]}
+                if action != "recover":
+                    known_servers = {item["name"] for item in locations("servers", country, backend, city, protocol)["items"]}
             if server:
                 if not city or not SERVER_RE.fullmatch(server):
                     raise ValueError("Select a valid server within a discovered city")
-                if server not in known_servers:
+                if action != "recover" and server not in known_servers:
                     raise ValueError("Select a server returned by the official CLI")
                 argv += ["--server", server]
             if protocol != "auto": argv.append("--" + protocol)
             if kill_switch: argv.append("--kill-switch")
             if action == "switch":
                 current = status(profile, backend)
-                if current.get("can_disconnect"):
-                    run(launcher + ["--stop"], timeout=110)
-                    if status(profile, backend)["state"] != "disconnected":
-                        raise BridgeError("The existing tunnel did not disconnect; the new connection was not started.", "unconfirmed")
-                elif current["state"] != "disconnected":
-                    raise BridgeError("Cannot identify the current connection. Refresh before switching.", "unconfirmed")
-            output = run(argv + ["--connect"], timeout=195)
+                protection = traffic_protection()
+                if (kill_switch or (protection and protection["kill_switch"]) or current.get("kill_switch")):
+                    raise BridgeError("Switching a full kill-switch session is unavailable. The block was retained. Disconnect deliberately before choosing a new connection.", "protection")
+                if (protocol != "wireguard" or current.get("protocol") != "WireGuard"
+                        or current["state"] != "connected" or not protection or protection["phase"] != "active"):
+                    raise BridgeError("Switching requires a connected, guarded WireGuard session. Disconnect deliberately before changing protocols or recovering an interrupted session.", "unconfirmed")
+                privileged_command(vendor, min_api=5)
+            output = run(argv + [{"switch": "--switch", "recover": "--recover"}.get(action, "--connect")],
+                         timeout=250 if action in ("switch", "recover") else 195)
         else:
             run(launcher + ["--stop"], timeout=110)
-    result = status(profile, backend)
     expected = "disconnected" if action == "disconnect" else "connected"
-    if result["state"] != expected:
+    # A single adapter request can finish before NM has published the new
+    # external connection. Read again briefly; never repeat the mutation.
+    deadline = time.monotonic() + 3
+    for _ in range(5):
+        result = status(profile, backend)
+        if (result["state"] == expected and not result.get("error")) or result["state"] not in ("unknown", "connecting", "disconnecting") or time.monotonic() >= deadline:
+            break
+        time.sleep(0.5)
+    if result["state"] != expected or result.get("error"):
         raise BridgeError("The command finished, but the requested VPN state was not confirmed. Refresh status and inspect the client locally.", "unconfirmed")
     if backend == "official-cli":
         try:
@@ -642,13 +712,15 @@ def operation_lock():
 def dispatch(args):
     if args.action == "diagnostics":
         return {"report": diagnostics(args.backend)}
+    if args.action == "updates":
+        return updates()
     validate_profile(args.profile)
     if args.action == "check":
         result = status(args.profile, args.backend)
         checks = prerequisites(args.backend)
         result.update(nmcli=bool(shutil.which("nmcli")), pkexec=Path("/usr/bin/pkexec").is_file(),
                       has_vendor=bool(safe_vendor_binary()), prerequisites=checks,
-                      setup_ready=all(item["ready"] for item in checks))
+                      setup_ready=all(item["ready"] for item in checks), report=diagnostics(args.backend, checks))
         result["setup_message"] = next((item["label"] + ": " + item["message"]
                                         for item in checks if not item["ready"]), "")
         if not result["setup_ready"]:
@@ -697,7 +769,7 @@ def dispatch(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["check", "status", "diagnostics", "countries", "cities", "servers", "connect", "switch", "disconnect", "release-protection", "verify-protection", "ip"])
+    parser.add_argument("action", choices=["check", "status", "diagnostics", "updates", "countries", "cities", "servers", "connect", "recover", "switch", "disconnect", "release-protection", "verify-protection", "ip"])
     parser.add_argument("--country", default="DE")
     parser.add_argument("--city", default="")
     parser.add_argument("--profile", default=PROFILE)

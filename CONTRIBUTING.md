@@ -20,7 +20,8 @@ contents of `/etc/wireguard`, client account files or shell history. Do not chan
 Keep the native Omarchy APIs and short-lived Python/QML process model. Do not
 add a permanent daemon or second Quickshell process. Automated tests must use
 mocks and must not use account credentials or change host networking. Preserve
-the root-owned API 4 package boundary, official-client authentication flow,
+the root-owned package boundary and explicit API compatibility (connect 4,
+guarded switch 5, held-guard recovery 6), official-client authentication flow,
 strict input validation and the rule that unrelated NetworkManager profiles
 and firewall tables are not modified.
 
