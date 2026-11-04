@@ -1,11 +1,12 @@
-# Test the 0.7 beta
+# Test the 0.8 candidate
 
-Wider-machine validation of the 0.7 beta remains pending. Record the exact
+Fresh-VM testing was explicitly excluded from this session and remains untested.
+The following independent-install checklist is for future contributors. Record the exact
 release tag and full commit SHA when testing a release. When testing an unreleased
 candidate, test only the exact pull request head commit: record its full SHA from GitHub, fetch
 that commit into a disposable Omarchy 4 VM, and confirm `git rev-parse HEAD`
 matches before testing. Do not report an unqualified default-branch install as
-0.7. Protect the host by keeping the VM network and snapshot disposable. A VM
+0.8. Protect the host by keeping the VM network and snapshot disposable. A VM
 cannot validate physical Wi-Fi handoff or laptop suspend/resume.
 
 ## Before installing
@@ -13,14 +14,14 @@ cannot validate physical Wi-Fi handoff or laptop suspend/resume.
 - [ ] Confirm ordinary guest internet works with the VPN disconnected.
 - [ ] Run the credential-free mock and static checks below.
 - [ ] Review `packaging/cyberghostvpn/PKGBUILD`, `.SRCINFO`, the resolved-only
-  hook patch and fixed-path API 4 helper.
-- [ ] Build candidate package `cyberghostvpn-omarchy` 1.5.0-8 with
+  hook patch and fixed-path API 6 helper.
+- [ ] Build candidate package `cyberghostvpn-omarchy` 1.5.0-10 with
   `bash tools/build-client.sh` or pass `--archive /path/to/official.zip`. It
   builds without installing dependencies or the package; keep the archive
   and printed artifact private and outside Git. Inspect the inventory. The
   recipe provides/conflicts with the older `cyberghostvpn` package. Review any
   migration transaction; existing 1.5.0-7/API 4 users do not need to upgrade
-  for the candidate panel UI.
+  for ordinary connect/disconnect; switching needs API 5 and guarded recovery API 6.
 - [ ] Review the exact package-manager transaction before installing. Stop if
   it proposes unexpected removals or upgrades. The previous package
   1.5.0-7/API 4 remains usable.
@@ -59,8 +60,9 @@ cannot validate physical Wi-Fi handoff or laptop suspend/resume.
   location as proof of endpoint identity.
 - [ ] Use **Verify traffic protection** and record pass/fail. If exercising
   the optional guard, check only the tested WireGuard cases. Full blocking
-  begins after connection; switching and intentional disconnect release it.
-  There is no startup, automatic reconnect or hard-kill guarantee.
+  begins after connection; intentional disconnect releases it. Full-guard switching
+  must be refused without changing the guard.
+  There is no startup or hard-kill guarantee; opt-in recovery has the limits below.
 - [ ] Confirm DNS and ordinary networking recover after disconnect. Public
   IPv6 recovery is testable only when the VM has a verified global IPv6 route
   and an independent external baseline. Otherwise record it as untested.
@@ -89,12 +91,12 @@ ln -s /usr/share/omarchy/shell "$CG_QML_IMPORTS/qs"
 Mock tests use no credentials and do not change host networking. Set
 `CG_TEST_PACKAGE=/path/to/private-package.pkg.tar.zst` to exercise package
 integration tests; without it, report the actual skips from the test output.
-The candidate suite passed 134 tests with the built package and no skips on
+The candidate suite passed 158 tests with the built package and no skips on
 the ThinkPad. CI runs the source suite on Python 3.12 and 3.14 with nine
 private-package skips; native UI and live-network checks are separate. Static checks do
 not prove native rendering or live VPN behavior.
 
-The 0.7 candidate also has 16 mocked UI-logic tests runnable with Node.js 18
+The current candidate has 28 mocked UI-logic tests runnable with Node.js 18
 or newer:
 
 ```bash
@@ -113,3 +115,57 @@ The initial Escape assertion ran before the closing animation finished; an
 isolated check with a bounded animation wait passed. The real backend, theme
 and plugin preferences were restored, with no VPN transition. These checks
 verify UI interaction, not fresh live VPN connectivity.
+
+
+## 0.8 local evidence
+
+- Reviewed migration from legacy cyberghostvpn 1.5.0-7 to
+  cyberghostvpn-omarchy 1.5.0-9/API5 installed only the old/new client packages. The subsequent
+  1.5.0-10/API6 upgrade and final reviewed reinstall changed only that package.
+  The unchanged vendor executable and existing account flow continued working.
+- Live 0.7 DE/Frankfurt Quick Connect and NL/Amsterdam GUI individual-server
+  switching returned distinct bound IPv4 values and matching country results.
+  The final GUI disconnect lost focus; reviewed backend cleanup succeeded.
+- Live 0.8 opt-in recovery armed after an explicit connection and completed one
+  bounded reconnect after a controlled stop through the reviewed helper.
+  Native version/update metadata and tunnel DNS catchall checks passed.
+- Initial API5 GUI switching was not confirmed. A targeted backend switch
+  passed. A later GUI reproduction stopped safely before connecting because
+  keyboard focus was lost. Do not count those GUI assertions as passed.
+- The installed guard policy passed isolated namespace packet tests, including
+  staged IPv6 guarding and old/new transport mark behavior. An actual full
+  guard blocked the tested direct IPv4/IPv6 requests; cleanup restored both.
+- A later root-helper full-guard refusal returned the exact policy-refusal
+  exit and preserved guard metadata. Same-profile Wi-Fi down/up retained the
+  tunnel/guard and restored bound IPv4; this is not an alternate-AP handoff.
+  The initial RTC post-wake assertion was unconfirmed. The final API6 bounded
+  run passed suspend/wake, the same kernel guard/tunnel and bound IPv4 after
+  resume, followed by reviewed disconnect cleanup.
+  Final API6 GUI acceptance connected, armed recovery and recovered once after
+  deletion of the verified owned tunnel. The new generation/mark matched its
+  kernel guard and a tunnel-bound IPv4 request passed. The root observer saw
+  209 samples with no missing table. GUI NL individual-server switching and
+  disconnect passed; exact preferences were restored. These samples are not
+  continuous leak verification.
+  Root grammar, guard ownership/fingerprint, kill-switch refusal and
+  failure-cleanup paths have mock coverage.
+
+Manual packet checks use only disposable network namespaces and load policy
+from the reviewed, root-owned installed helper. Review before authorizing:
+
+```bash
+sudo python3 -I tests/check_guard_namespace.py
+```
+
+There is no fresh-machine, always-on, startup, hard-kill or general leak-proof
+claim. Keep all diagnostics, public addresses, packet captures and vendor
+artifacts private.
+
+Final host check: the VPN and guard were absent, NetworkManager/resolved were
+active, the resolved stub link was unchanged, IPv6 disable flags were zero,
+and normal public IPv4 worked. The currently active Wi-Fi differed from the
+earlier dual-stack test profile and had no global IPv6 address/default route.
+A normal NetworkManager reapply did not restore one. IPv6 recovery is therefore
+unconfirmed for this final run; neither a plugin regression nor network-side
+IPv6 availability was established. No static route, RA, DNS, firewall or IPv6
+configuration workaround was applied.

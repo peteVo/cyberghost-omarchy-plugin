@@ -64,7 +64,7 @@ class PrerequisiteTests(unittest.TestCase):
              }[str(path)]):
             adapter = next(item for item in b.prerequisites("official-cli") if item["id"] == "adapter")
         self.assertFalse(adapter["ready"])
-        self.assertIn("1.5.0-7", adapter["message"])
+        self.assertIn("API 4", adapter["message"])
 
     def test_service_command_failure_marks_service_unready(self):
         def service_result(argv, timeout):

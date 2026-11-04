@@ -22,7 +22,7 @@ never imply independent provider verification.
 
 The optional WireGuard kill switch is connection-scoped. Explain that full
 blocking starts after connection and tunnel identification, and intentional
-disconnect or switching releases it. Status reports configuration; explicit
+disconnect releases it. Full kill-switch switching is refused. Status reports configuration; explicit
 Verify checks the current firewall fingerprint and tunnel generation. Neither
 is continuous monitoring or proof of packets, handshake, provider identity or
 universal leak protection. Preserve the startup and hard-kill caveats in the
@@ -90,3 +90,23 @@ delayed worker; stale status and keyboard navigation remained usable. One
 layout correction kept Quick Connect out of other tabs. The real backend,
 original theme and exact plugin preferences were restored; no live VPN
 transition was performed. Captures stay private.
+
+The 0.8 candidate adds a session-only recovery toggle and explicit installed
+versions/release metadata in Settings. Recovery defaults off, arms after an
+explicit widget WireGuard connection, keeps a surviving tunnel through uplink
+loss and limits absent-tunnel retries to two after fresh safe observations.
+API6 can retain an owned IPv6-only guard during retry of the exact previous
+target. Full traffic blocks require manual recovery. Explain the limits next
+to the toggle; never suggest startup or continuous protection.
+
+Version information reuses the allowlisted local report. The separate update
+button makes an anonymous request to this project's GitHub releases and shows
+the published tag, time checked, fixed release-notes link and copyable Omarchy
+update command. It does not install packages or fetch assets. Setup and update
+results scroll into view using the existing native focus/scroll pattern.
+
+Native dark/light recovery, versions, update result, toggle/cancellation, focus
+and Escape checks passed with mock state in the existing shell. One correction
+made the update result scroll into view. Final confirmation captures were
+inspected; keep them private. Actual API6 network acceptance is recorded
+separately in TESTING.md. The shared ghost proportions remain unchanged.

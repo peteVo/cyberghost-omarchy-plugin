@@ -110,7 +110,7 @@ def probe(family, address, marked=False, port=PORT):
     sock.settimeout(0.7)
     try:
         if marked:
-            sock.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_MARK", 36), MARK)
+            sock.setsockopt(socket.SOL_SOCKET, getattr(socket, "SO_MARK", 36), MARK if marked is True else marked)
         sock.connect((address, port))
         return True
     except OSError:
@@ -251,6 +251,16 @@ def main():
         run(["/usr/bin/nft", "-f", "-"], input_text=guard_script(MARK, False, replace=True))
         expect("IPv6-only guard IPv4", probe(socket.AF_INET, V4_SERVER), True)
         expect("IPv6-only guard IPv6", probe(socket.AF_INET6, V6_SERVER), False)
+
+        # API5 switch staging: replace, never delete, until the new mark is ready.
+        run(["/usr/bin/nft", "-f", "-"], input_text=guard_script(None, False, replace=True, bootstrap_uid=RESOLVER_UID))
+        expect("switch staging IPv6", probe(socket.AF_INET6, V6_SERVER), False)
+        expect("switch staging root IPv6 DNS", probe(socket.AF_INET6, V6_SERVER, port=DNS_PORT), False)
+        expect("switch staging resolver IPv6 DNS", probe_as_uid(RESOLVER_UID, socket.AF_INET6, V6_SERVER, DNS_PORT), True)
+        run(["/usr/bin/nft", "-f", "-"], input_text=guard_script(MARK + 1, False, replace=True))
+        expect("switched guard direct IPv6", probe(socket.AF_INET6, V6_SERVER), False)
+        expect("switched guard old mark", probe(socket.AF_INET6, V6_SERVER, True), False)
+        expect("switched guard new mark", probe(socket.AF_INET6, V6_SERVER, MARK + 1), True)
 
         run(["/usr/bin/nft", "delete", "table", "inet", TABLE])
         nft_guard = False

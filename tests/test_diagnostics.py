@@ -27,12 +27,14 @@ class DiagnosticsTests(unittest.TestCase):
 
         with patch.object(b, "run", side_effect=package), \
              patch.object(b, "prerequisites", return_value=checks), \
+             patch.object(b, "helper_api", return_value=None), \
              patch.object(Path, "read_text", return_value='{"version":"2.3.4-beta1"}'):
             report = b.diagnostics("manual-profile")
 
-        self.assertEqual(set(report), {"schema", "plugin_version", "python_version", "platform", "backend", "packages", "prerequisites"})
+        self.assertEqual(set(report), {"schema", "plugin_version", "helper_api", "python_version", "platform", "backend", "packages", "prerequisites"})
         self.assertEqual(report["schema"], 1)
         self.assertEqual(report["plugin_version"], "2.3.4-beta1")
+        self.assertIsNone(report["helper_api"])
         self.assertEqual(report["backend"], "manual-profile")
         self.assertEqual(set(report["packages"]), set(PACKAGES))
         self.assertEqual(report["prerequisites"], [{"id": "python", "ready": True}])
@@ -51,6 +53,7 @@ class DiagnosticsTests(unittest.TestCase):
 
         with patch.object(b, "run", side_effect=package), \
              patch.object(b, "prerequisites", return_value=[]), \
+             patch.object(b, "helper_api", return_value=None), \
              patch.object(Path, "read_text", side_effect=OSError):
             report = b.diagnostics("manual-profile")
         self.assertEqual(report["plugin_version"], "unknown")
@@ -67,12 +70,14 @@ class DiagnosticsTests(unittest.TestCase):
 
         with patch.object(b, "run", side_effect=package), \
              patch.object(b, "prerequisites", return_value=[]), \
+             patch.object(b, "helper_api", return_value=5), \
              patch.object(b, "vendor_binary", side_effect=AssertionError("vendor lookup")), \
              patch.object(b, "status", side_effect=AssertionError("status lookup")):
             report = b.diagnostics("manual-profile")
         self.assertEqual([call[-1] for call in calls], list(PACKAGES))
         self.assertTrue(all(call[:2] == ["/usr/bin/pacman", "-Q"] for call in calls))
         self.assertEqual(report["backend"], "manual-profile")
+        self.assertEqual(report["helper_api"], 5)
 
     def test_official_report_uses_only_local_probes_and_helper_version(self):
         calls = []
@@ -102,11 +107,12 @@ class DiagnosticsTests(unittest.TestCase):
             report = b.diagnostics("official-cli")
 
         helper_checks = [argv for argv in calls if argv[-1:] == ["--version"]]
-        self.assertEqual(helper_checks, [["/usr/local/cyberghost/omarchy-bridge", "--version"]])
+        self.assertEqual(helper_checks, [["/usr/local/cyberghost/omarchy-bridge", "--version"]] * 2)
         self.assertEqual([argv[-1] for argv in calls if argv[0] == "/usr/bin/pacman"], list(PACKAGES))
         self.assertTrue(all(argv[0] not in ("curl", "/usr/bin/curl") for argv in calls))
         self.assertTrue(all(argv[0] != "/usr/local/cyberghost/cyberghostvpn" for argv in calls))
         self.assertEqual(report["backend"], "official-cli")
+        self.assertEqual(report["helper_api"], 4)
 
     def test_dispatch_routes_diagnostics_without_validating_or_resolving_profile(self):
         args = SimpleNamespace(action="diagnostics", backend="manual-profile", profile="invalid\nprofile")

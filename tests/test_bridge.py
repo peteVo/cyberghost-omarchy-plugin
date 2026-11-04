@@ -222,27 +222,28 @@ class VendorPathTests(unittest.TestCase):
                              ["/usr/bin/pkexec", adapter])
         self.assertEqual(run.call_args, call([adapter, "--version"], timeout=3))
         with patch.object(b, "safe_system_binary", return_value=adapter), \
-             patch.object(b, "run", return_value="omarchy-bridge 1\n") as run:
+             patch.object(b, "run", return_value="omarchy-bridge 3\n") as run:
             with self.assertRaises(b.BridgeError) as caught:
                 b.privileged_command("/usr/local/cyberghost/cyberghostvpn")
         self.assertEqual(caught.exception.code, "dependency")
-        self.assertIn("1.5.0-7", str(caught.exception))
+        self.assertIn("API 4", str(caught.exception))
         run.assert_called_once_with([adapter, "--version"], timeout=3)
 
-    def test_old_reviewed_helper_is_allowed_for_stop_but_not_connect(self):
+    def test_api4_supports_connect_but_not_switch(self):
         adapter = "/usr/local/cyberghost/omarchy-bridge"
         vendor = "/usr/local/cyberghost/cyberghostvpn"
         with patch.object(b, "safe_system_binary", return_value=adapter), \
-             patch.object(b, "run") as run:
-            self.assertEqual(b.privileged_command(vendor, require_api=False),
+             patch.object(b, "run", return_value="omarchy-bridge 4\n") as run:
+            self.assertEqual(b.privileged_command(vendor),
                              ["/usr/bin/pkexec", adapter])
-        run.assert_not_called()
+        run.assert_called_once_with([adapter, "--version"], timeout=3)
 
         with patch.object(b, "safe_system_binary", return_value=adapter), \
-             patch.object(b, "run", return_value="omarchy-bridge 1\n") as run:
+             patch.object(b, "run", return_value="omarchy-bridge 4\n") as run:
             with self.assertRaises(b.BridgeError) as caught:
-                b.privileged_command(vendor)
+                b.privileged_command(vendor, min_api=5)
         self.assertEqual(caught.exception.code, "dependency")
+        self.assertIn("API 5", str(caught.exception))
         run.assert_called_once_with([adapter, "--version"], timeout=3)
         with patch.object(b, "safe_system_binary", return_value=None):
             with self.assertRaises(b.BridgeError) as caught:
@@ -334,6 +335,27 @@ class NetworkManagerTests(unittest.TestCase):
              patch.object(b, "run") as run, \
              patch.object(b, "status", return_value={"state": "connected"}):
             b.operate("connect", "DE", "", "openvpn")
+        run.assert_called_once()
+
+    def test_post_operation_waits_for_observation_without_repeating_mutation(self):
+        with patch.object(b, "profile_info", return_value=UUID), \
+             patch.object(b, "active_connections", return_value=[]), \
+             patch.object(b, "run") as run, \
+             patch.object(b.time, "sleep") as sleep, \
+             patch.object(b, "status", side_effect=[{"state": "unknown"}, {"state": "connected"}]) as status:
+            self.assertEqual(b.operate("connect", "DE", "", "openvpn")["state"], "connected")
+        run.assert_called_once()
+        self.assertEqual(status.call_count, 2)
+        sleep.assert_called_once_with(0.5)
+
+    def test_post_operation_does_not_confirm_connected_state_with_error(self):
+        with patch.object(b, "profile_info", return_value=UUID), \
+             patch.object(b, "active_connections", return_value=[]), \
+             patch.object(b, "run") as run, \
+             patch.object(b, "status", return_value={"state": "connected", "error": "Unconfirmed ownership"}):
+            with self.assertRaises(b.BridgeError) as caught:
+                b.operate("connect", "DE", "", "openvpn")
+        self.assertEqual(caught.exception.code, "unconfirmed")
         run.assert_called_once()
 
     def test_post_operation_state_mismatch_is_unconfirmed(self):
@@ -767,19 +789,49 @@ class OfficialCliTests(unittest.TestCase):
         self.assertFalse(any(command.args[0][0] == "/usr/bin/pkexec"
                              for command in run.call_args_list))
 
-    def test_interrupted_switch_stop_never_starts_the_new_connection(self):
+    def test_interrupted_guarded_switch_uses_one_api5_switch_request(self):
         launcher = ["/usr/bin/pkexec", "/usr/local/cyberghost/omarchy-bridge"]
-        with patch.object(b, "active_connections", return_value=[]), \
+        owned = [["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "activated", "wireguard", "cyberghost"]]
+        guard = {"uid": 1000, "device": "cyberghost", "interface_index": 7,
+                 "mark": 42, "kill_switch": False, "phase": "active", "fingerprint": "a" * 64}
+        with patch.object(b.os, "getuid", return_value=1000), \
+             patch.object(b, "traffic_protection", return_value=guard), \
+             patch.object(b, "active_connections", return_value=owned), \
+             patch.object(b, "wireguard_status", return_value={"state": "connected", "protocol": "WireGuard"}), \
+             patch.object(b, "external_connection", return_value=True), \
              patch.object(b, "vendor_binary", return_value="/usr/local/cyberghost/cyberghostvpn"), \
              patch.object(b, "privileged_command", return_value=launcher), \
-             patch.object(b, "run", side_effect=["Germany DE\n", b.BridgeError("timed out", "timeout")]) as run, \
-             patch.object(b, "status", return_value={"state": "connected", "can_disconnect": True}):
+             patch.object(b, "run", side_effect=b.BridgeError("timed out", "timeout")) as run, \
+             patch.object(b, "status", return_value={"state": "connected", "protocol": "WireGuard"}), \
+             patch.object(b, "locations", return_value={"items": [{"code": "DE"}]}):
             with self.assertRaises(b.BridgeError) as caught:
-                b.operate("switch", "DE", "", "cyberghost", "official-cli")
+                b.operate("switch", "DE", "", "cyberghost", "official-cli", "wireguard")
         self.assertEqual(caught.exception.code, "timeout")
         privileged = [command.args[0] for command in run.call_args_list
                       if command.args[0][0] == "/usr/bin/pkexec"]
-        self.assertEqual(privileged, [launcher + ["--stop"]])
+        self.assertEqual(privileged, [launcher + ["--traffic", "--country-code", "DE", "--wireguard", "--switch"]])
+        self.assertEqual(run.call_args_list[-1].kwargs["timeout"], 250)
+
+    def test_full_kill_switch_refuses_switch_before_privileged_mutation(self):
+        launcher = ["/usr/bin/pkexec", "/usr/local/cyberghost/omarchy-bridge"]
+        owned = [["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "activated", "wireguard", "cyberghost"]]
+        guard = {"uid": 1000, "device": "cyberghost", "interface_index": 7,
+                 "mark": 42, "kill_switch": True, "phase": "active", "fingerprint": "a" * 64}
+        with patch.object(b.os, "getuid", return_value=1000), \
+             patch.object(b, "traffic_protection", return_value=guard), \
+             patch.object(b, "active_connections", return_value=owned), \
+             patch.object(b, "wireguard_status", return_value={"state": "connected", "protocol": "WireGuard"}), \
+             patch.object(b, "external_connection", return_value=True), \
+             patch.object(b, "vendor_binary", return_value="/usr/local/cyberghost/cyberghostvpn"), \
+             patch.object(b, "privileged_command", return_value=launcher) as authorize, \
+             patch.object(b, "run") as run, \
+             patch.object(b, "status", return_value={"state": "connected", "protocol": "WireGuard", "kill_switch": True}), \
+             patch.object(b, "locations", return_value={"items": [{"code": "DE"}]}):
+            with self.assertRaises(b.BridgeError) as caught:
+                b.operate("switch", "DE", "", "cyberghost", "official-cli", "wireguard")
+        self.assertEqual(caught.exception.code, "protection")
+        authorize.assert_called_once_with("/usr/local/cyberghost/cyberghostvpn", require_api=True)
+        self.assertFalse(any(item.args[0][0] == "/usr/bin/pkexec" for item in run.call_args_list))
 
     def test_cancelled_connect_is_not_retried_or_reported_as_connected(self):
         launcher = ["/usr/bin/pkexec", "/usr/local/cyberghost/omarchy-bridge"]
@@ -831,22 +883,26 @@ class OfficialCliTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             b.operate("connect", "DE", "", "openvpn", "manual-profile", "wireguard", kill_switch=True)
 
-    def test_switch_stops_but_never_connects_when_disconnect_is_unconfirmed(self):
-        launcher = ["/usr/bin/pkexec", "/usr/local/cyberghost/omarchy-bridge"]
-        with patch.object(b, "active_connections", return_value=[]), \
-             patch.object(b, "vendor_binary", return_value="/usr/local/cyberghost/cyberghostvpn"), \
-             patch.object(b, "privileged_command", return_value=launcher), \
-             patch.object(b, "run", side_effect=["1 Germany DE\n", ""]) as run, \
-             patch.object(b, "status", side_effect=[
-                 {"state": "connected", "can_disconnect": True},
-                 {"state": "connected"},
-             ]):
-            with self.assertRaises(b.BridgeError) as caught:
-                b.operate("switch", "DE", "", "cyberghost", "official-cli")
-        self.assertEqual(caught.exception.code, "unconfirmed")
-        privileged = [command.args[0] for command in run.call_args_list
-                      if command.args[0][0] == "/usr/bin/pkexec"]
-        self.assertEqual(privileged, [launcher + ["--stop"]])
+    def test_unguarded_or_non_wireguard_sessions_refuse_switch_before_privileged_mutation(self):
+        for protection, protocol in ((None, "WireGuard"),
+                                     ({"uid": 1000, "phase": "prepared", "kill_switch": False}, "WireGuard"),
+                                     ({"uid": 1000, "phase": "active", "kill_switch": False}, "OpenVPN")):
+            with self.subTest(protection=protection, protocol=protocol):
+                owned = [["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "activated", "wireguard", "cyberghost"]]
+                with patch.object(b.os, "getuid", return_value=1000), \
+                     patch.object(b, "traffic_protection", return_value=protection), \
+                     patch.object(b, "active_connections", return_value=owned), \
+                     patch.object(b, "wireguard_status", return_value={"state": "connected", "protocol": "WireGuard"}), \
+                     patch.object(b, "external_connection", return_value=True), \
+                     patch.object(b, "vendor_binary", return_value="/usr/local/cyberghost/cyberghostvpn"), \
+                     patch.object(b, "privileged_command", return_value=["/usr/bin/pkexec", "/adapter"]) as authorize, \
+                     patch.object(b, "run") as run, \
+                     patch.object(b, "status", return_value={"state": "connected", "protocol": protocol}), \
+                     patch.object(b, "locations", return_value={"items": [{"code": "DE"}]}):
+                    with self.assertRaises(b.BridgeError) as caught:
+                        b.operate("switch", "DE", "", "cyberghost", "official-cli", "wireguard")
+                self.assertEqual(caught.exception.code, "unconfirmed")
+                self.assertFalse(any(item.args[0][0] == "/usr/bin/pkexec" for item in run.call_args_list))
 
 
     def test_official_connect_and_disconnect_refuse_any_active_vpn(self):

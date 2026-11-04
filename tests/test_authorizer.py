@@ -119,7 +119,104 @@ class AuthorizerTests(unittest.TestCase):
             capture_output=True, text=True, timeout=3, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "omarchy-bridge 4\n")
+        self.assertEqual(result.stdout, "omarchy-bridge 6\n")
+
+    def test_switch_grammar_requires_wireguard_and_rejects_kill_switch(self):
+        valid = ["--traffic", "--country-code", "NL", "--city", "Amsterdam",
+                 "--server", "nl-amsterdam-s1", "--wireguard", "--switch"]
+        adapter.validate(valid)
+        for argv in (
+            ["--traffic", "--country-code", "NL", "--switch"],
+            ["--traffic", "--country-code", "NL", "--openvpn", "--switch"],
+            ["--traffic", "--country-code", "NL", "--wireguard", "--kill-switch", "--switch"],
+            ["--traffic", "--country-code", "NL", "--kill-switch", "--wireguard", "--switch"],
+        ):
+            with self.subTest(argv=argv), self.assertRaises(ValueError):
+                adapter.validate(argv)
+
+    def test_switch_refuses_full_kill_switch_before_any_vendor_call(self):
+        protection = {"uid": 1000, "device": "cyberghost", "interface_index": 7,
+                      "mark": 42, "kill_switch": True, "phase": "active",
+                      "fingerprint": "a" * 64}
+        (geteuid, environ, getpwuid, lock, guard, namespace, prepare, apply,
+         remove, vendor) = self.authorized()
+        with (geteuid, environ, getpwuid, lock,
+              patch.object(adapter, "guard_state", return_value=protection),
+              patch.object(adapter, "guard_fingerprint", return_value="a" * 64),
+              patch.object(adapter, "wireguard_details", return_value=(7, 42)),
+              namespace as isolate, prepare as stage, vendor as call_vendor):
+            with self.assertRaises(RuntimeError):
+                adapter.main(["--traffic", "--country-code", "NL", "--wireguard", "--switch"])
+        isolate.assert_not_called()
+        stage.assert_not_called()
+        call_vendor.assert_not_called()
+
+    def test_switch_requires_current_fingerprint_and_tunnel_identity(self):
+        protection = {"uid": 1000, "device": "cyberghost", "interface_index": 7,
+                      "mark": 42, "kill_switch": False, "phase": "active",
+                      "fingerprint": "a" * 64}
+        for fingerprint, details in (("b" * 64, (7, 42)), ("a" * 64, (8, 42)),
+                                     ("a" * 64, (7, 43))):
+            with self.subTest(fingerprint=fingerprint, details=details):
+                (geteuid, environ, getpwuid, lock, guard, namespace, prepare, apply,
+                 remove, vendor) = self.authorized()
+                with (geteuid, environ, getpwuid, lock,
+                      patch.object(adapter, "guard_state", return_value=protection),
+                      patch.object(adapter, "guard_fingerprint", return_value=fingerprint),
+                      patch.object(adapter, "wireguard_details", return_value=details),
+                      namespace as isolate, prepare as stage, vendor as call_vendor):
+                    with self.assertRaises(RuntimeError):
+                        adapter.main(["--traffic", "--country-code", "NL", "--wireguard", "--switch"])
+                isolate.assert_not_called()
+                stage.assert_not_called()
+                call_vendor.assert_not_called()
+
+    def test_switch_keeps_guard_through_stop_and_connect_then_applies_active_guard(self):
+        protection = {"uid": 1000, "device": "cyberghost", "interface_index": 7,
+                      "mark": 42, "kill_switch": False, "phase": "active",
+                      "fingerprint": "a" * 64}
+        events = []
+        (geteuid, environ, getpwuid, lock, guard, namespace, prepare, apply,
+         remove, vendor) = self.authorized()
+        with (geteuid, environ, getpwuid, lock,
+              patch.object(adapter, "guard_state", return_value=protection),
+              patch.object(adapter, "guard_fingerprint", return_value="a" * 64),
+              patch.object(adapter, "wireguard_details", return_value=(7, 42)),
+              patch.object(adapter, "ipv6_namespace", side_effect=lambda: events.append("namespace")),
+              patch.object(adapter, "prepare_guard", side_effect=lambda uid: events.append(("prepare", uid))),
+              patch.object(adapter, "tunnel_absent", side_effect=lambda: events.append("absent") or True),
+              patch.object(adapter, "apply_guard", side_effect=lambda uid, kill: events.append(("apply", uid, kill))),
+              patch.object(adapter, "remove_guard") as release,
+              patch.object(adapter, "vendor", side_effect=lambda argv, env: events.append(tuple(argv)) or 0)):
+            result = adapter.main(["--traffic", "--country-code", "NL", "--wireguard", "--switch"])
+        self.assertEqual(result, 0)
+        self.assertEqual(events, ["namespace", ("prepare", 1000), ("--stop",), "absent",
+                                  ("--traffic", "--country-code", "NL", "--wireguard", "--connect"),
+                                  ("apply", 1000, False)])
+        release.assert_not_called()
+
+    def test_failed_switch_stop_never_connects_and_rollback_releases_only_after_absence(self):
+        protection = {"uid": 1000, "device": "cyberghost", "interface_index": 7,
+                      "mark": 42, "kill_switch": False, "phase": "active",
+                      "fingerprint": "a" * 64}
+        calls = []
+        (geteuid, environ, getpwuid, lock, guard, namespace, prepare, apply,
+         remove, vendor) = self.authorized()
+        def vendor_call(argv, env):
+            calls.append(argv)
+            return 1 if len(calls) == 1 else 0
+        with (geteuid, environ, getpwuid, lock,
+              patch.object(adapter, "guard_state", return_value=protection),
+              patch.object(adapter, "guard_fingerprint", return_value="a" * 64),
+              patch.object(adapter, "wireguard_details", return_value=(7, 42)),
+              namespace, prepare, patch.object(adapter, "vendor", side_effect=vendor_call),
+              patch.object(adapter, "tunnel_absent", return_value=True) as absent,
+              patch.object(adapter, "remove_guard") as release):
+            with self.assertRaises(RuntimeError):
+                adapter.main(["--traffic", "--country-code", "NL", "--wireguard", "--switch"])
+        self.assertEqual(calls, [["--stop"], ["--stop"]])
+        absent.assert_called_once_with()
+        release.assert_called_once_with(1000)
 
     def test_guard_metadata_is_unprotected_until_nft_commit_succeeds(self):
         link = SimpleNamespace(

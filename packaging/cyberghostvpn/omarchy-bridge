@@ -24,9 +24,11 @@ def validate(argv):
     if argv in (["--stop"], ["--release-protection"], ["--verify-protection"]):
         return
     if (len(argv) < 4 or argv[:2] != ["--traffic", "--country-code"]
-            or not re.fullmatch(r"[A-Z]{2}", argv[2]) or argv[-1] != "--connect"):
+            or not re.fullmatch(r"[A-Z]{2}", argv[2]) or argv[-1] not in ("--connect", "--switch", "--recover")):
         raise ValueError
     options = argv[3:-1]
+    if argv[-1] in ("--switch", "--recover") and (options[-1:] != ["--wireguard"] or "--kill-switch" in options):
+        raise ValueError
     if options[-1:] == ["--kill-switch"]:
         options = options[:-1]
         if options[-1:] != ["--wireguard"]:
@@ -250,15 +252,24 @@ def tunnel_absent():
     return not any(item["ifname"] == "cyberghost" for item in links)
 
 
-def rollback(uid, kill_switch, environment):
+def retain_recovery_guard(uid):
+    # Remove the bootstrap resolver exception without releasing the outage guard.
+    value = {"uid": uid, "device": "cyberghost", "interface_index": 0,
+             "mark": 0, "kill_switch": False}
+    install_guard(value, None, False, "prepared")
+
+
+def rollback(uid, kill_switch, environment, *, retain_guard=False):
     try:
         vendor(["--stop"], environment)
-        if not kill_switch and tunnel_absent():
+        if not kill_switch and not retain_guard and tunnel_absent():
             remove_guard(uid)
     except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired):
         pass
     if kill_switch:
         prepare_guard(uid, blocked=True)
+    elif retain_guard:
+        retain_recovery_guard(uid)
 
 
 @contextmanager
@@ -302,6 +313,16 @@ def main(argv):
                 print(json.dumps({"protection_verified": verified}))
                 return 0
             wireguard = "--wireguard" in argv
+            switching = argv[-1:] == ["--switch"]
+            recovering = argv[-1:] == ["--recover"]
+            if switching or recovering:
+                # Never weaken a full traffic block for vendor bootstrap traffic.
+                if (not protection or protection["phase"] != "active" or protection["kill_switch"]
+                        or not protection.get("fingerprint")
+                        or guard_fingerprint() != protection["fingerprint"]
+                        or (not tunnel_absent() if recovering else
+                            wireguard_details() != (protection["interface_index"], protection["mark"]))):
+                    raise RuntimeError("Retry requires verified IPv6-only protection and the expected tunnel state")
             ipv6_namespace()
             if argv == ["--stop"]:
                 result = vendor(argv, environment)
@@ -310,24 +331,36 @@ def main(argv):
                         raise RuntimeError("Tunnel did not stop; protection retained")
                     remove_guard(uid)
                 return result
-            if protection:
+            if protection and not (switching or recovering):
                 print("Disconnect the protected session before starting another connection.", file=sys.stderr)
                 return 75
             kill_switch = "--kill-switch" in argv
             vendor_args = [arg for arg in argv if arg != "--kill-switch"]
+            if switching or recovering:
+                vendor_args[-1] = "--connect"
+            connect_started = False
             try:
                 if wireguard:
                     prepare_guard(uid)
+                if switching:
+                    # prepare_guard replaces our table atomically and keeps IPv6
+                    # blocked (resolver DNS excepted) while the old tunnel stops.
+                    if vendor(["--stop"], environment) != 0 or not tunnel_absent():
+                        raise RuntimeError("Cannot confirm old tunnel teardown")
+                connect_started = True
                 result = vendor(vendor_args, environment)
                 if result == 0 and wireguard:
                     apply_guard(uid, kill_switch)
                 elif result and wireguard:
-                    rollback(uid, kill_switch, environment)
+                    rollback(uid, kill_switch, environment, retain_guard=recovering)
                 return result
             except (ValueError, RuntimeError, OSError, subprocess.TimeoutExpired, KeyboardInterrupt):
                 # Keep the root lock while attempting rollback of a partial start.
                 if wireguard:
-                    rollback(uid, kill_switch, environment)
+                    if recovering and not connect_started:
+                        retain_recovery_guard(uid)
+                    else:
+                        rollback(uid, kill_switch, environment, retain_guard=recovering)
                 raise
     except BlockingIOError:
         print("Another CyberGhost operation is active.", file=sys.stderr)
@@ -339,7 +372,7 @@ def main(argv):
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--version"]:
-        print("omarchy-bridge 4")
+        print("omarchy-bridge 6")
         sys.exit(0)
     signal.signal(signal.SIGTERM, interrupted)
     signal.signal(signal.SIGINT, interrupted)

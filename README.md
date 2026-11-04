@@ -16,8 +16,8 @@ omarchy plugin add https://github.com/peteVo/cyberghost-omarchy-plugin.git --ena
 For an existing checkout, use `omarchy plugin update petevo.cyberghost` after
 reviewing and preserving local changes. The installer follows the default
 branch. For an unreleased candidate, test the exact pull-request head commit
-and confirm its reported version before connecting. Version 0.7 remains an
-experimental beta; fresh-machine validation is pending. See [TESTING.md](TESTING.md).
+and confirm its reported version before connecting. The 0.8.0-beta.1 candidate
+is on `feat/recovery-0.8` and is not merged. See [TESTING.md](TESTING.md).
 
 Requirements: x86-64 Linux, Omarchy 4, its native Quickshell, NetworkManager and Python
 3.12+. The supported target is Omarchy 4; vanilla Arch with GNOME/KDE is not a
@@ -38,13 +38,14 @@ iproute2 and Polkit dependencies.
 
 ## Official CLI setup
 
-Official CLI mode needs the reviewed local package. The candidate package is
-`cyberghostvpn-omarchy` 1.5.0-8, with helper API 4. It preserves the unchanged,
-checksum-pinned CyberGhost 1.5.0 executable. The existing
-`cyberghostvpn` 1.5.0-7/API 4 package remains usable; it does not need an update
-for the plugin's candidate UI. The candidate package provides and conflicts
-with `cyberghostvpn`. If migrating from the old package name, review the
-package-manager transaction yourself; migration is not automatic.
+Official CLI mode needs the reviewed local package. The 0.8 candidate uses
+`cyberghostvpn-omarchy` 1.5.0-10 with helper API 6 and the unchanged,
+checksum-pinned CyberGhost 1.5.0 executable. It provides and conflicts with the
+legacy `cyberghostvpn` package. API 4 remains compatible with connect and
+disconnect; location switching requires API 5 and guarded recovery API 6.
+The renamed package was migrated from the legacy client and upgraded locally
+without other package changes. Existing official-client authentication remained
+usable; no account setup was repeated. The plugin's core dependencies did not change.
 
 Build and install are separate. Install the build tools (`base-devel` and
 `libarchive`) through your normal Arch package manager after reviewing its
@@ -78,16 +79,51 @@ explicit action that contacts a third party and binds to the detected tunnel
 interface.
 
 The panel supports country, city, server, protocol, favorites and switching
-controls. Quick Connect uses the explicitly selected favorite, or the last
+controls. Protocol changes require disconnecting first. A WireGuard location
+switch uses one privileged request and lock across the old stop and new
+connect. Its own nftables guard remains through an atomic bootstrap stage.
+IPv4 and the native resolver's IPv6 DNS exception remain allowed during that
+stage; this is not a DNS-leak test or a full IPv4 privacy claim. Full
+kill-switch sessions cannot switch: the UI, Python bridge and root helper
+reject the request without mutation and retain the block. Safe full-guard
+switching remains blocked until the vendor can be bootstrapped with a reviewed
+endpoint constraint.
+
+Quick Connect uses the explicitly selected favorite, or the last
 successfully connected location when no favorite is selected. It rediscovers
 and validates saved locations before connecting; unavailable targets stop
 without substitution. Saved locations and notification preference stay local
 and are omitted from shareable diagnostics. A displayed connected label or location is reported state, not proof
 of provider identity, routed traffic, DNS/IPv6 protection or kill-switch
 enforcement. WireGuard is the recommended protocol. The optional kill switch
-starts full blocking only after connection, and intentional disconnect or
-switch releases it. There is no always-on, startup, automatic reconnect or
-hard-kill guarantee. OpenVPN has no plugin IPv6 guard and may bypass over IPv6.
+starts full blocking only after connection, and intentional disconnect releases it. Full kill-switch switches are refused.
+There is no always-on, startup or hard-kill guarantee. OpenVPN has no plugin IPv6 guard and may bypass over IPv6.
+
+Optional recovery is off by default and lives only for the current shell
+session. When enabled, only an explicit WireGuard connection from the widget
+arms it. Recovery keeps a surviving tunnel while waiting for the network. If
+the tunnel is gone, it requires fresh safe status and an available uplink,
+waits at least 30 seconds, and makes at most two attempts per user connection.
+With an owned active IPv6-only guard, API 6 validates its fingerprint and tunnel
+absence, then retries only the last confirmed target bound to the same boot
+and previous tunnel generation. It retains the guard throughout; a failed
+retry removes the temporary resolver exception and requires manual recovery.
+It does not rediscover targets through potentially blocked DNS or substitute
+another server. Normal connects, switches and Quick Connect still use fresh
+catalogs. A full kill-switch outage remains blocked for manual recovery.
+A successful retry does not reset the attempt budget. Only a generic failure
+with a subsequent safe state can schedule the last attempt after 60 seconds.
+Authentication, cancellation, timeout, unknown/protection/conflict/status errors
+pause recovery. Local Polkit may prompt normally. Panel disconnects and
+selection changes cancel it; detected identity changes or conflicting VPNs
+pause it. Disable recovery before external management, or use the pauseRecovery
+IPC command documented in SECURITY.md.
+
+Settings can explicitly check GitHub release metadata for this fixed project
+and show the release notes plus a copyable Omarchy update command. The check
+does not fetch release assets or install updates. The diagnostics allowlist
+includes nullable helper API version alongside package and prerequisite
+versions.
 
 The fallback can control one explicitly selected, existing NetworkManager
 OpenVPN profile. It resolves the profile by UUID and rejects missing,
@@ -131,13 +167,38 @@ notification toggling and stale-status keyboard interaction. The real backend,
 original theme and plugin preferences were restored; no VPN transition was
 performed. See [TESTING.md](TESTING.md) for remaining validation.
 
-Bounded WireGuard testing on one ThinkPad passed DE-to-NL GUI switching,
-distinct tunnel-bound IPv4 results, DNS and dual-stack disconnect recovery,
-and the tested guard/firewall checks. Package 1.5.0-7/API 4 was used. The
-older 0.4 IPv6 route-loss cause remains unknown. Physical Wi-Fi handoff,
-suspend/resume and native UI checks passed on the earlier version; wider
-machine validation is pending. See [SECURITY.md](SECURITY.md) for the exact
-scope and limits. No broader leak-protection claim is made.
+On the ThinkPad, live 0.7 DE/Frankfurt Quick Connect and NL/Amsterdam
+specific-server GUI switching changed the tunnel-bound IPv4 and reported
+country as expected. The final GUI disconnect lost focus and aborted; reviewed
+backend cleanup succeeded, the IPv6 default route returned, disable flags
+were zero, and saved preferences were restored.
+
+The final 0.8/API6 native check connected and armed recovery, deleted only the
+verified owned test tunnel, and completed one guarded reconnect. The new
+interface generation matched the kernel guard and a tunnel-bound IPv4 request
+succeeded. Across 209 sampled checks the table was never absent; sampling
+does not prove continuous leak protection. The GUI then switched to a freshly
+discovered NL individual server and disconnected normally. Exact plugin
+preferences were restored. An earlier API5 GUI assertion was unconfirmed; its
+cause remains unknown, and a read-only settling window now accommodates
+asynchronous state publication without repeating operations.
+
+Native dark/light recovery/version/update checks and isolated namespace packet
+tests passed. Full-guard direct IPv4/IPv6 requests were blocked in the tested
+cases; same-profile Wi-Fi down/up retained the tunnel and restored bound IPv4.
+Full-guard switching was refused without changing the session. See
+[TESTING.md](TESTING.md) and [SECURITY.md](SECURITY.md) for suspend evidence,
+bootstrap/DNS limits and unresolved distribution constraints. Fresh VM testing
+was explicitly excluded.
+
+Final host check: the VPN and guard were absent, NetworkManager/resolved were
+active, the resolved stub link was unchanged, IPv6 disable flags were zero,
+and normal public IPv4 worked. The currently active Wi-Fi differed from the
+earlier dual-stack test profile and had no global IPv6 address/default route.
+A normal NetworkManager reapply did not restore one. IPv6 recovery is therefore
+unconfirmed for this final run; neither a plugin regression nor network-side
+IPv6 availability was established. No static route, RA, DNS, firewall or IPv6
+configuration workaround was applied.
 
 ## Checks
 
@@ -147,9 +208,8 @@ networking. Run `python3 -m unittest discover -s tests -v`,
 `bash -n tools/host-baseline.sh tools/build-client.sh`,
 `omarchy plugin validate .`, and Qt6 `qmllint` with the `qs` import mapping
 documented in [TESTING.md](TESTING.md). Package tests skip unless
-`CG_TEST_PACKAGE` points to a private locally built package. The candidate
-suite passes 134 tests with the built package and no skips; without it, nine
-package tests skip. Static checks do not
+`CG_TEST_PACKAGE` points to a private locally built package. The 0.8 source candidate passes 158 Python tests with its private built
+package and no skips, plus 28 Node UI-logic tests. Static checks do not
 validate live VPN behavior or native rendering.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for safe reports and changes. To remove
@@ -157,3 +217,17 @@ the plugin, disconnect first, then run `omarchy plugin disable
 petevo.cyberghost` and `omarchy plugin remove petevo.cyberghost`. Remove the
 CLI package separately with the package manager; do not run the vendor
 uninstaller.
+
+
+## Distribution status
+
+The reviewed package remains a private local build. No vendor archive,
+key-bearing package or generated account data is published with plugin releases.
+AUR publication is blocked by the vendor's hardcoded `/usr/local` layout and
+unresolved vendor redistribution/license text and package-source licensing
+requirements. The installed CLI help advertises no relocation option. Do not
+patch the executable or add a host-wide path workaround to claim compliance.
+See [Arch packaging standards](https://wiki.archlinux.org/title/Arch_Packaging_Standards),
+[AUR submission guidelines](https://wiki.archlinux.org/title/AUR_submission_guidelines)
+and [vendor terms](https://www.cyberghostvpn.com/terms). No vendor permission or
+AUR eligibility is asserted.

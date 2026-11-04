@@ -15,7 +15,7 @@
 - Use connected GitHub tools for remote state/delivery when available. Verify the current remote and commit ancestry; do not bypass branch protections or rewrite history. Report any current remote access limitation accurately.
 - Final ThinkPad check: VPN disconnected, normal IPv4 works, NM/resolved active and IPv6-disable flags 0. The 0.4 guard, DNS, Wi-Fi handoff, suspend/resume and native GUI checks passed. For 0.5, package 1.5.0-7/API4 adds resolver bootstrap handling and catchable-interruption cleanup; live dual-stack recovery and signal/firewall tests passed. Wider-machine validation remains pending. During the earlier 0.4 investigation the IPv6 RA default route did not return after reapply/activation/full Wi-Fi reconnect; it returned before 0.5 testing without a plugin route/RA change. Latest package 1.5.0-7 dual-stack DNS/IPv6 recovery checks and the 0.5 GUI connect/specific-server switch/bound-IP/disconnect flow passed. No leftover CyberGhost nft table was found; UFW rules were not modified. Investigate with fresh evidence instead of adding stale routes or changing RA/firewall settings blindly.
 
-- The optional WireGuard kill switch is connection-scoped: full blocking begins after connection and intentional disconnect/switch releases it. Ordinary status reports configuration, not live firewall enforcement. Explicit Verify compares the kernel table fingerprint and tunnel index/mark at check time. Preserve the startup/hard-kill caveats in SECURITY.md. Vendor connect/stop runs with IPv6 sysctls read-only in a private mount namespace; never disable host IPv6 as a workaround. Preparation alone allows the native resolver UID IPv6 DNS on 53/853; active/blocked guards must remove that exception. API4/1.5.0-7 or newer is required by this branch.
+- The optional WireGuard kill switch is connection-scoped: full blocking begins after connection and intentional disconnect releases it. Full-guard switching/recovery is refused without mutation. Ordinary status reports configuration, not live firewall enforcement. Explicit Verify compares the kernel table fingerprint and tunnel index/mark at check time. Preserve the startup/hard-kill caveats in SECURITY.md. Vendor connect/stop runs with IPv6 sysctls read-only in a private mount namespace; never disable host IPv6 as a workaround. Preparation alone allows the native resolver UID IPv6 DNS on 53/853; active/blocked guards must remove that exception. API4 supports ordinary connect/disconnect; newer operations require the versions below.
 
 
 - For the 0.6 wider-beta candidate, keep GhostIcon.qml shared between panel and
@@ -25,7 +25,7 @@
   It must never execute the vendor, authenticate, request a public IP, read
   account/profile data or include raw command output. Keep backend and QML schema
   validation aligned; never ask contributors to post host-baseline/vendor logs.
-- The maintained source recipe is cyberghostvpn-omarchy 1.5.0-8, providing and
+- The 0.6 source recipe was cyberghostvpn-omarchy 1.5.0-8, providing and
   conflicting with cyberghostvpn. Legacy reviewed 1.5.0-7/API4 remains compatible.
   The build helper is unprivileged and overrides makepkg destinations into its
   0700 scratch tree; keep all vendor/key-bearing artifacts private. AUR policy
@@ -43,4 +43,43 @@
   cancel deferred connection on revision/mode changes. Store lastSuccessful
   only after confirmed connect/switch; keep it out of shareable diagnostics.
   Run Node 18+ test-only checks with `node --test tests/test_ui_logic.mjs` in
-  addition to the Python/native checks. Preserve the unchanged API 4 package.
+  addition to the Python/native checks. The 0.7 release preserved API 4.
+
+- The 0.8 candidate uses cyberghostvpn-omarchy 1.5.0-10/API6. API4 supports
+  ordinary connect/disconnect, API5 guarded WireGuard switches, API6 held-guard
+  recovery. A switch must retain its IPv6-only nft table through bootstrap;
+  IPv4 and native resolver IPv6 DNS remain allowed in that stage. Full kill
+  switch switching/recovery must refuse before mutation; never add a broad
+  root egress exception to make vendor bootstrap work.
+- Recovery defaults off and is session-only. Arm only after explicit widget
+  WireGuard success; freeze the target, old interface generation and protection
+  policy. Keep a surviving tunnel during uplink loss. Retry an absent tunnel
+  only after fresh safe status/uplink and at least 30 seconds, at most twice
+  per explicit connection. API6 requires owned active nonkill guard, matching
+  kernel fingerprint and tunnel absence. Python also requires the exact private
+  boot/interface-bound prior requested target; recovery alone skips catalog DNS.
+  Do not run vendor stop before recovery connect starts. Failed recovery keeps
+  IPv6 guarding without bootstrap DNS and requires manual attention. Cancel on
+  manual operations/selection changes; pause on uncertain/auth/conflict errors.
+  Disable recovery before external management; pauseRecovery IPC broadcasts it.
+- Version reports accept nullable helper APIs 4/5/6. Update checks are explicit
+  anonymous fixed-project HTTPS metadata requests; validate canonical tag/URL,
+  never download assets, install updates or attach credentials. Keep diagnostic
+  reports account/profile/network-free. AUR path/vendor permission/source-license
+  blockers remain unresolved; do not publish vendor artifacts or claim listing.
+- Fresh VM testing is explicitly excluded from this work. Record final 0.8
+  live results in TESTING.md; do not turn aborted focus/auth/assertion checks
+  into passes. Preserve the user's small shared ghost and native shell process.
+
+- Final 0.8/API6 GUI held-guard recovery, new-generation kernel verification,
+  bound IPv4, NL individual-server switch and disconnect passed on the ThinkPad.
+  The observer saw 209 samples with no missing table; no continuous leak claim.
+  Exact preferences were restored. The initial API5 GUI failure cause remains
+  unknown. Preserve these distinctions and the fresh-VM exclusion.
+
+- Latest final API6 suspend/wake, same-tunnel/guard and bound IPv4 passed, with
+  reviewed disconnect cleanup. Final NM/resolved, stub resolver, normal IPv4,
+  guard/tunnel absence and IPv6-disable-zero checks passed. Current Wi-Fi has
+  no global IPv6/default route and differs from the earlier dual-stack profile;
+  reapply did not restore it. Current IPv6 recovery is unconfirmed, cause and
+  network-side availability unknown. Do not override RA/routes/DNS to hide it.

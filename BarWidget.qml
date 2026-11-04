@@ -34,6 +34,21 @@ Ui.BarWidget {
   property double verificationAt: 0
   property double publicIpAt: 0
   property double clockNow: Date.now()
+  property var versionReport: null
+  property var releaseInfo: null
+  property double updatesCheckedAt: 0
+  // Session intent only: loading the plugin never arms an automatic connection.
+  property bool recoveryEnabled: false
+  property bool recoveryArmed: false
+  property bool recoveryInFlight: false
+  property var recoveryTarget: null
+  property int recoveryAttempts: 0
+  property int recoveryRevision: 0
+  property int recoveryIndex: 0
+  property bool recoveryKillSwitch: false
+  property double recoveryNextAt: 0
+  property double recoveryLastClock: 0
+  property string recoveryMessage: "Off · Enable before connecting"
   readonly property bool statusStale: lastStatusAt <= 0 || clockNow < lastStatusAt || clockNow - lastStatusAt > 45000
   readonly property var quickTarget: quickTargetKey
     ? favorites.find(function(item) { return root.validTarget(item) && root.favoriteKey(item) === root.quickTargetKey }) || null
@@ -55,7 +70,7 @@ Ui.BarWidget {
   property var setupChecks: []
   property string setupMessage: ""
   property bool killSwitch: setting("killSwitch", false) === true
-  readonly property bool busy: awaiting && (pending === "connect" || pending === "switch" || pending === "disconnect" || pending === "release-protection")
+  readonly property bool busy: awaiting && (pending === "connect" || pending === "recover" || pending === "switch" || pending === "disconnect" || pending === "release-protection")
   readonly property bool working: awaiting
   readonly property bool dynamicMode: backendMode === "official-cli"
   readonly property bool transitioning: busy || snapshot.state === "connecting" || snapshot.state === "disconnecting"
@@ -64,7 +79,7 @@ Ui.BarWidget {
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
   readonly property string runner: decodeURIComponent(String(Qt.resolvedUrl("cg_bridge.py")).replace(/^file:\/\//, ""))
-  readonly property string stateText: busy ? (pending === "release-protection" ? "Restoring networking…" : pending === "disconnect" ? "Disconnecting…" : pending === "switch" ? "Switching…" : "Connecting…")
+  readonly property string stateText: busy ? (pending === "release-protection" ? "Restoring networking…" : pending === "disconnect" ? "Disconnecting…" : pending === "switch" ? "Switching…" : pending === "recover" ? "Recovering…" : "Connecting…")
     : snapshot.other_vpn_active === true ? "Another VPN active"
     : snapshot.state === "connected" ? "Connected"
     : snapshot.state === "disconnected" ? "Disconnected"
@@ -97,12 +112,91 @@ Ui.BarWidget {
     return seconds < 60 ? seconds + "s ago" : Math.floor(seconds / 60) + "m ago"
   }
   function clearHealth() {
+    stopRecovery("Connection settings changed. Enable recovery for the next connection.")
     lastStatusAt = 0
     statusFailed = false
     verificationAt = 0
     publicIpAt = 0
     protectionCheck = ""
     observedState = ""
+  }
+  function stopRecovery(reason) {
+    recoveryArmed = false
+    recoveryInFlight = false
+    recoveryTarget = null
+    recoveryNextAt = 0
+    recoveryRevision++
+    recoveryMessage = reason || "Waiting for your next connection"
+  }
+  function setRecovery(value) {
+    recoveryEnabled = value === true
+    stopRecovery(recoveryEnabled ? "Enabled for your next WireGuard connection · Up to two attempts" : "Off · Enable before connecting")
+  }
+  function pauseAutomaticRecovery() { setRecovery(false) }
+  function recoverableState(data) {
+    return (data.state === "disconnected" && data.can_connect === true
+            && data.can_release_protection !== true && !data.error)
+      || (data.state === "recovery-required" && data.can_recover === true
+          && data.protection_phase === "active" && data.kill_switch === false
+          && !recoveryKillSwitch && data.protection_index === recoveryIndex)
+  }
+  function observeRecovery(data, task) {
+    if (!recoveryEnabled) return
+    if ((data.error && !recoverableState(data)) || data.other_vpn_active === true) { stopRecovery("Paused · Resolve the connection error before reconnecting"); return }
+    if (data.state === "connected" && (data.protocol !== "WireGuard" || data.device !== "cyberghost"
+        || typeof data.interface_index !== "number" || !isFinite(data.interface_index)
+        || data.interface_index <= 0 || Math.floor(data.interface_index) !== data.interface_index || data.ipv6_guard !== true)) {
+      stopRecovery("Recovery needs an identified WireGuard tunnel with recorded protection"); return
+    }
+    const now = Date.now()
+    if (recoveryLastClock && now < recoveryLastClock) { stopRecovery("Paused after clock change. Start a connection again to arm recovery."); return }
+    recoveryLastClock = now
+    if ((task === "connect" || task === "switch") && data.state === "connected") {
+      const target = { country: pendingCountry, city: pendingCity, protocol: selectedProtocol, server: selectedServer }
+      if (data.protocol !== "WireGuard" || target.protocol !== "wireguard" || !validTarget(target)) {
+        stopRecovery("Recovery requires an explicitly selected WireGuard connection."); return
+      }
+      recoveryTarget = target
+      recoveryIndex = data.interface_index
+      recoveryKillSwitch = data.kill_switch === true
+      recoveryAttempts = 0
+      recoveryArmed = true
+      recoveryMessage = "Armed for this connection · No startup connection"
+    }
+    if (!recoveryArmed) return
+    if (data.state === "connected") {
+      if (task === "recover") {
+        recoveryIndex = data.interface_index
+        recoveryInFlight = false
+        recoveryMessage = "Recovery completed · Verify connectivity separately"
+      } else if (data.interface_index !== recoveryIndex) {
+        stopRecovery("Connection changed outside recovery. Start a connection again to arm it.")
+      } else if (recoveryNextAt || recoveryMessage.indexOf("Waiting for network") === 0) {
+        recoveryNextAt = 0
+        recoveryMessage = "Tunnel route returned · Verify connectivity separately"
+      }
+      return
+    }
+    if (data.state === "waiting-network" && data.interface_index === recoveryIndex) {
+      recoveryNextAt = 0
+      recoveryMessage = "Waiting for network · Keeping the existing tunnel"
+      return
+    }
+    if (!recoverableState(data)) {
+      stopRecovery("Paused · Connection or traffic protection needs manual attention")
+      return
+    }
+    if (data.uplink_ready !== true) { recoveryMessage = "Waiting for an upstream route"; return }
+    if (recoveryAttempts >= 2) { stopRecovery("Two-attempt limit reached · Reconnect manually"); return }
+    if (!recoveryNextAt) recoveryNextAt = now + 30000
+    recoveryMessage = "Tunnel absent · Waiting before recovery; system authorization may be required"
+    if (now < recoveryNextAt) return
+    const revision = recoveryRevision
+    Qt.callLater(function() {
+      if (root.recoveryEnabled && root.recoveryArmed && root.recoveryRevision === revision && !root.working
+          && root.recoverableState(root.snapshot) && root.snapshot.uplink_ready === true
+          && !root.statusStale && !root.statusFailed) root.invoke("recover")
+    })
   }
   function notify(title, body, operation) {
     const peers = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
@@ -124,7 +218,7 @@ Ui.BarWidget {
       lastStatusAt = clockNow
       statusFailed = false
       const changed = observedState && observedState !== data.state
-      if (task === "connect" || task === "switch")
+      if (task === "connect" || task === "recover" || task === "switch")
         notify(task === "switch" ? "VPN location switched" : "VPN connected", "Connection reported. Check Details for routing and protection observations.", true)
       else if (task === "disconnect" || task === "release-protection")
         notify("VPN disconnected", "Normal networking was requested. Check the panel if recovery needs attention.", true)
@@ -138,6 +232,7 @@ Ui.BarWidget {
       const target = { country: pendingCountry, city: pendingCity, protocol: selectedProtocol, server: selectedServer }
       if (validTarget(target)) { lastSuccessful = target; persistSettings({ lastSuccessful: target }) }
     }
+    observeRecovery(data, task)
   }
   function validTarget(item) {
     return !!item && typeof item === "object" && !Array.isArray(item)
@@ -148,12 +243,14 @@ Ui.BarWidget {
   }
   function cancelSavedTarget() { favoriteToApply = null; quickConnecting = false }
   function cancelQuickConnect() {
+    stopRecovery("Quick Connect cancelled")
     selectionRevision++
     cancelSavedTarget()
     message = "Quick Connect cancelled before connecting."
   }
   function startSavedTarget(target, connectAfter) {
     if (working || protocolRefresh || !dynamicMode) return
+    stopRecovery("Saved target changed. Start a connection to arm recovery.")
     if (!validTarget(target)) {
       message = "This saved location has invalid settings. Remove it and save the location again."
       cancelSavedTarget()
@@ -240,6 +337,7 @@ Ui.BarWidget {
   }
   function selectCountry(value) {
     if (working || protocolRefresh || value === selectedCountry) return
+    stopRecovery("Selected location changed. Start a connection to arm recovery.")
     cancelSavedTarget()
     selectedCountry = value
     resetLocations()
@@ -248,6 +346,7 @@ Ui.BarWidget {
   }
   function selectCity(value) {
     if (working || protocolRefresh || value === selectedCity) return
+    stopRecovery("Selected location changed. Start a connection to arm recovery.")
     cancelSavedTarget()
     selectedCity = value
     selectedServer = ""
@@ -257,12 +356,14 @@ Ui.BarWidget {
   }
   function selectServer(value) {
     if (working || protocolRefresh || value === selectedServer) return
+    stopRecovery("Selected server changed. Start a connection to arm recovery.")
     cancelSavedTarget()
     selectedServer = value
     selectionRevision++
   }
   function selectProtocol(value) {
     if (working || protocolRefresh || ["auto", "wireguard", "openvpn"].indexOf(value) < 0 || value === selectedProtocol) return
+    stopRecovery("Protocol changed. Start a connection to arm recovery.")
     cancelSavedTarget()
     selectedProtocol = value
     selectedServer = ""
@@ -275,6 +376,7 @@ Ui.BarWidget {
   }
   function setKillSwitch(value) {
     if (working || snapshot.can_disconnect) return
+    stopRecovery("Protection preference changed. Start a connection to arm recovery.")
     killSwitch = value === true
     persistSettings({ killSwitch: killSwitch })
   }
@@ -310,20 +412,31 @@ Ui.BarWidget {
   }
   function invoke(task) {
     if (working) return
-    var args = ["/usr/bin/python3", runner, task, "--backend", backendMode, "--profile", profileName]
-    if (task === "countries" || task === "cities" || task === "servers" || task === "connect" || task === "switch")
-      args.push("--protocol", selectedProtocol)
-    if (task === "cities" || task === "servers" || task === "connect" || task === "switch") {
-      args.push("--country", selectedCountry)
-      if ((task === "servers" || task === "connect" || task === "switch") && selectedCity.length)
-        args.push("--city", selectedCity)
+    if (["connect", "switch", "disconnect", "release-protection"].indexOf(task) >= 0) stopRecovery("Manual operation · Automatic attempts cancelled")
+    if (task === "recover") {
+      if (!recoveryEnabled || !recoveryArmed || recoveryAttempts >= 2 || !validTarget(recoveryTarget)
+          || recoveryTarget.protocol !== "wireguard" || !recoverableState(snapshot)
+          || snapshot.uplink_ready !== true
+          || statusStale || statusFailed || !setupReady || !dynamicMode) return
+      recoveryAttempts++
+      recoveryInFlight = true
+      recoveryNextAt = 0
+      recoveryMessage = "Recovery attempt " + recoveryAttempts + " of 2 · Authorization may be required"
     }
-    if (task === "servers" || task === "connect" || task === "switch") args.push("--server", selectedServer)
-    if ((task === "connect" || task === "switch") && dynamicMode && killSwitch) args.push("--kill-switch")
+    const target = task === "recover" ? recoveryTarget : { country: selectedCountry, city: selectedCity, protocol: selectedProtocol, server: selectedServer }
+    var args = ["/usr/bin/python3", runner, task === "recover" ? (snapshot.can_recover === true ? "recover" : "connect") : task, "--backend", backendMode, "--profile", profileName]
+    if (["countries", "cities", "servers", "connect", "recover", "switch"].indexOf(task) >= 0) args.push("--protocol", target.protocol)
+    if (["cities", "servers", "connect", "recover", "switch"].indexOf(task) >= 0) args.push("--country", target.country)
+    if (["servers", "connect", "recover", "switch"].indexOf(task) >= 0) {
+      if (target.city.length) args.push("--city", target.city)
+      args.push("--server", target.server)
+    }
+    if ((task === "connect" || task === "recover" || task === "switch") && dynamicMode
+        && (task === "recover" ? recoveryKillSwitch : killSwitch)) args.push("--kill-switch")
     if (task === "countries") discovery = ({ items: [], reason: "Loading countries…" })
     if (task === "cities") cities = ({ items: [], reason: "Loading cities…" })
     if (task === "servers") servers = ({ items: [], reason: "Loading servers…" })
-    if (task === "connect" || task === "switch" || task === "disconnect" || task === "release-protection") {
+    if (task === "connect" || task === "recover" || task === "switch" || task === "disconnect" || task === "release-protection") {
       publicIp = ""
       protectionCheck = ""
       publicIpAt = 0
@@ -332,8 +445,8 @@ Ui.BarWidget {
     if (task === "verify-protection") { verificationAt = 0; protectionCheck = "" }
     if (task !== "status") message = ""
     pending = task
-    pendingCountry = selectedCountry
-    pendingCity = selectedCity
+    pendingCountry = target.country
+    pendingCity = target.city
     pendingRevision = selectionRevision
     helperExit = -1
     awaiting = true
@@ -362,7 +475,7 @@ Ui.BarWidget {
             return !item || typeof item !== "object" || typeof item.ready !== "boolean"
               || typeof item.label !== "string" || typeof item.message !== "string"
           }))) throw new Error("Invalid setup checks")
-      if (data.ok && ["check", "status", "connect", "switch", "disconnect", "release-protection"].indexOf(task) >= 0
+      if (data.ok && ["check", "status", "connect", "recover", "switch", "disconnect", "release-protection"].indexOf(task) >= 0
           && (["unknown", "connected", "disconnected", "connecting", "disconnecting", "waiting-network", "blocked", "recovery-required"].indexOf(data.state) < 0
               || typeof data.can_connect !== "boolean" || typeof data.can_disconnect !== "boolean"))
         throw new Error("Invalid connection state")
@@ -370,12 +483,13 @@ Ui.BarWidget {
         throw new Error("Invalid IP result")
       if (data.ok && task === "verify-protection" && typeof data.protection_verified !== "boolean")
         throw new Error("Invalid protection result")
-      if (data.ok && task === "diagnostics" && (!data.report || typeof data.report !== "object"
+      if (data.ok && (task === "diagnostics" || (task === "check" && data.report !== undefined)) && (!data.report || typeof data.report !== "object"
           || Array.isArray(data.report) || data.report.schema !== 1 || typeof data.report.plugin_version !== "string"
           || (data.report.plugin_version !== "unknown" && !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$/.test(data.report.plugin_version))
           || typeof data.report.python_version !== "string" || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(data.report.python_version)
           || ["linux", "unsupported"].indexOf(data.report.platform) < 0 || data.report.backend !== backendMode
-          || Object.keys(data.report).some(function(key) { return ["schema", "plugin_version", "python_version", "platform", "backend", "packages", "prerequisites"].indexOf(key) < 0 })
+          || (data.report.helper_api !== null && [4, 5, 6].indexOf(data.report.helper_api) < 0)
+          || Object.keys(data.report).some(function(key) { return ["schema", "plugin_version", "python_version", "helper_api", "platform", "backend", "packages", "prerequisites"].indexOf(key) < 0 })
           || !Array.isArray(data.report.prerequisites) || data.report.prerequisites.some(function(item) {
             return !item || typeof item.ready !== "boolean"
               || ["python", "architecture", "tools", "NetworkManager", "systemd-resolved", "resolvconf", "adapter", "resolver"].indexOf(item.id) < 0
@@ -387,6 +501,11 @@ Ui.BarWidget {
               || (value !== null && (typeof value !== "string" || !/^[0-9][A-Za-z0-9.+_:~\-]{0,63}$/.test(value)))
           })))
         throw new Error("Invalid diagnostic report")
+      if (data.ok && task === "updates" && data.release !== null && (!data.release || typeof data.release !== "object"
+          || typeof data.release.tag !== "string" || !/^v[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}(?:-beta\.[0-9]{1,4})?$/.test(data.release.tag)
+          || typeof data.release.prerelease !== "boolean"
+          || data.release.url !== "https://github.com/peteVo/cyberghost-omarchy-plugin/releases/tag/" + data.release.tag))
+        throw new Error("Invalid release information")
     } catch (e) {
       data = { ok: false, error: "Cannot read the VPN helper response. Refresh, then check Python and the plugin installation." }
     }
@@ -395,6 +514,7 @@ Ui.BarWidget {
     // Bar settings can arrive after the initial helper was started.
     if ((data.backend !== undefined && data.backend !== backendMode)
         || (data.profile !== undefined && data.profile !== profileName)) {
+      stopRecovery("Backend changed · Automatic recovery paused")
       Qt.callLater(root.refresh)
       return
     }
@@ -403,20 +523,26 @@ Ui.BarWidget {
       if (task === "countries") discovery = ({ items: [], reason: message })
       else if (task === "cities") cities = ({ items: [], reason: message })
       else if (task === "servers") servers = ({ items: [], reason: message })
-      else if (task !== "diagnostics" && (task !== "ip" || data.code === "disconnected" || data.code === "unconfirmed")) {
+      else if (task !== "diagnostics" && task !== "updates" && (task !== "ip" || data.code === "disconnected" || data.code === "unconfirmed")) {
         snapshot = ({ backend: backendMode, state: "unknown", can_connect: false, can_disconnect: false })
         publicIp = ""
       }
       if (task === "countries" || task === "cities" || task === "servers") cancelSavedTarget()
-      if (["status", "check", "connect", "switch", "disconnect", "release-protection"].indexOf(task) >= 0) {
-        const operation = ["connect", "switch", "disconnect", "release-protection"].indexOf(task) >= 0
+      if (["status", "check", "connect", "recover", "switch", "disconnect", "release-protection"].indexOf(task) >= 0) {
+        const operation = ["connect", "recover", "switch", "disconnect", "release-protection"].indexOf(task) >= 0
         noteStateFailure(operation)
         if (operation)
           notify("VPN operation needs attention", "Open the VPN panel for the error and recovery options.", true)
       }
+      if (task === "recover") {
+        recoveryInFlight = false
+        if (data.code !== "operation_failed" || recoveryAttempts >= 2) stopRecovery("Recovery stopped · Check the error and reconnect manually")
+        else { recoveryNextAt = Date.now() + 60000; recoveryMessage = "Attempt failed · Waiting for fresh safe status before the final retry" }
+      } else if (task === "status" || task === "check") stopRecovery("Status unavailable · Automatic recovery paused")
       if (task === "countries" || task === "cities") protocolRefresh = false
       if (task === "check") { setupReady = false; setupMessage = message }
       if (task === "diagnostics") diagnosticReport = ""
+      if (task === "updates") { releaseInfo = null; updatesCheckedAt = 0 }
       if (task === "verify-protection") { verificationAt = 0; protectionCheck = "" }
       if (panelLoader.item) panelLoader.item.revealMessage()
       return
@@ -495,8 +621,14 @@ Ui.BarWidget {
         completeSavedTarget()
       } else if (selectedServer && !data.items.some(function(item) { return item.name === selectedServer })) selectedServer = ""
     } else if (task === "diagnostics") {
+      versionReport = data.report
       diagnosticReport = JSON.stringify(data.report, null, 2)
       if (panelLoader.item) panelLoader.item.revealReport()
+    }
+    else if (task === "updates") {
+      releaseInfo = data.release
+      updatesCheckedAt = clockNow
+      if (panelLoader.item) panelLoader.item.revealUpdates()
     }
     else if (task === "ip") { publicIp = data.ip || ""; publicIpAt = clockNow }
     else if (task === "verify-protection") {
@@ -517,6 +649,7 @@ Ui.BarWidget {
       message = data.error || data.warning || ""
       if (message && panelLoader.item) panelLoader.item.revealMessage()
       if (task === "check") {
+        if (data.report) versionReport = data.report
         hasVendor = data.has_vendor === true
         setupReady = data.setup_ready === true
         setupChecks = arrayFrom(data.prerequisites)
@@ -529,6 +662,10 @@ Ui.BarWidget {
 
   IpcHandler {
     target: "petevo.cyberghost"
+    function pauseRecovery(): string {
+      root.broadcast("pauseAutomaticRecovery")
+      return "paused"
+    }
     function diagnostics(): string {
       const origin = button.mapToGlobal(0, 0)
       return JSON.stringify({ opened: root.opened,
@@ -548,6 +685,10 @@ Ui.BarWidget {
         statusStale: root.statusStale, statusFailed: root.statusFailed,
         statusChecked: root.lastStatusAt > 0, verificationChecked: root.verificationAt > 0,
         quickConnecting: root.quickConnecting, quickTargetReady: !!root.quickTarget,
+        recoveryEnabled: root.recoveryEnabled, recoveryArmed: root.recoveryArmed,
+        recoveryAttempts: root.recoveryAttempts, recoveryInFlight: root.recoveryInFlight,
+        versionsReady: !!root.versionReport, updatesChecked: root.updatesCheckedAt > 0,
+        canSwitch: panelLoader.item ? panelLoader.item.canSwitch : false,
         notificationsEnabled: root.notifications, lastSuccessfulSaved: root.validTarget(root.lastSuccessful),
         reportReady: root.diagnosticReport.length > 0,
         reportSelected: panelLoader.item ? panelLoader.item.reportSelected : false,
