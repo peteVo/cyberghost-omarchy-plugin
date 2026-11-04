@@ -1,13 +1,61 @@
 # Test the 0.8 candidate
 
-Fresh-VM testing was explicitly excluded from this session and remains untested.
-The following independent-install checklist is for future contributors. Record the exact
+The earlier developer sessions excluded fresh-VM testing. A later independent
+TryOmarchy guest pass is recorded below, including its failures and gaps.
+The following independent-install checklist remains applicable. Record the exact
 release tag and full commit SHA when testing a release. When testing an unreleased
 candidate, test only the exact pull request head commit: record its full SHA from GitHub, fetch
 that commit into a disposable Omarchy 4 VM, and confirm `git rev-parse HEAD`
 matches before testing. Do not report an unqualified default-branch install as
 0.8. Protect the host by keeping the VM network and snapshot disposable. A VM
 cannot validate physical Wi-Fi handoff or laptop suspend/resume.
+
+## Independent TryOmarchy pass and unreleased compatibility fixes
+
+The 2026-11-04 guest pass tested `v0.8.0-beta.1` at
+`315177fc10b89c5926b030bbb28a54ddf9054085` on x86-64 TryOmarchy runtime
+4.0.4-10, Quickshell 0.3.2-1, Qt 6.12, NetworkManager 1.58.1-2 and
+systemd 262.1-1. The private 1.5.0-10/API6 package was built and installed
+independently. Native discovery, DE/Frankfurt connect, NL/Amsterdam automatic
+and individual-server switching, tunnel-bound IPv4/country observations,
+DNS resolution, favorite Quick Connect, two held-guard recovery attempts,
+attempt limiting, virtual Ethernet interruption and disconnected plugin
+removal/reinstallation passed in the bounded observed paths. Slow completion
+and interrupted focus/authorization observations were kept separate from passes.
+The namespace packet harness passed; it does not establish continuous protection.
+
+The published release failed dark-theme rendering on Qt 6.12: unqualified
+`Color` resolved against QtQuick's new singleton instead of Omarchy's palette.
+The unreleased fix uses `Commons.Color` for panel, toolbar and report-selection
+bindings. The report also returned a null Omarchy version because pacman names
+the provider `try-omarchy-runtime`; the fix accepts only that fixed provider
+for the existing `omarchy` key. A regression test retains rejection of unknown
+providers, malformed versions and extra output. Actual guest diagnostics now
+return Omarchy 4.0.4-10 with the same report schema and helper API6.
+
+The fix branch passed 159 Python tests with its private built package and no
+skips, all 28 Node UI tests, Python compilation, Bash syntax and native plugin
+validation. The requested Node `--test` command reported one successful
+file-level test on Node 26.13; direct execution confirmed all 28 individual
+tests. Qt6 qmllint exited 0 with 42 missing-property and five block-scope var
+warnings. Native rendering is verified separately: the first post-patch batch
+still used cached old components and is not a visual pass.
+
+After one explicitly approved `omarchy restart shell`, the confirmation batch
+passed actual dark/light Locations, Details, Settings and selected diagnostic
+report rendering. Text and the shared ghost follow the native palette; the
+new shell log contains zero plugin binding errors. The original in-memory
+theme palette was restored, with one native shell process, VPN disconnected
+and recovery off. The confirmation used local patches over the installed beta;
+the original release tag and published release were not modified.
+
+Live full-guard switch/recovery refusal and last-successful Quick Connect
+without a favorite remained untested after local authorization/observation
+windows expired. No valid fallback OpenVPN profile was supplied. The VM lacked
+a global IPv6 address and its baseline IPv6 HTTPS request timed out, so public
+IPv6 tests were unavailable. Neither authorization timeouts nor absent IPv6
+prove a VPN policy defect or protection. The original release report remains
+private and unchanged; these compatibility fixes do not turn its gaps into passes.
 
 ## Before installing
 

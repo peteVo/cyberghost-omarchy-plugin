@@ -79,6 +79,23 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(report["backend"], "manual-profile")
         self.assertEqual(report["helper_api"], 5)
 
+    def test_omarchy_runtime_provider_is_allowlisted_without_exposing_package_names(self):
+        for reply, expected in (
+            ("omarchy 4.0.6-1\n", "4.0.6-1"),
+            ("try-omarchy-runtime 4.0.4-10\n", "4.0.4-10"),
+            ("other-provider 4.0.4-10\n", None),
+            ("try-omarchy-runtime 4.0.4-10\nprivate output", None),
+            ("try-omarchy-runtime 4.0.4-10;echo-leak\n", None),
+        ):
+            with self.subTest(reply=reply), \
+                 patch.object(b, "run", return_value=reply), \
+                 patch.object(b, "helper_api", return_value=None):
+                report = b.diagnostics("official-cli", checks=[])
+            self.assertEqual(report["packages"]["omarchy"], expected)
+            self.assertTrue(all(report["packages"][name] is None for name in PACKAGES[1:]))
+            self.assertEqual(set(report["packages"]), set(PACKAGES))
+            self.assertNotIn("try-omarchy-runtime", json.dumps(report))
+
     def test_official_report_uses_only_local_probes_and_helper_version(self):
         calls = []
 

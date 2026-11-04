@@ -3,6 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 
 Ui.BarWidget {
@@ -735,7 +736,7 @@ Ui.BarWidget {
       GhostIcon {
         anchors.centerIn: parent
         opticalScale: 0.8
-        color: root.transitioning ? Color.accent : root.needsAttention ? Color.urgent
+        color: root.transitioning ? Commons.Color.accent : root.needsAttention ? Commons.Color.urgent
           : root.snapshot.state === "connected" ? (button.foreground.r + button.foreground.g + button.foreground.b < 1.5 ? "#866200" : "#ffcf36") : button.foreground
       }
     }
@@ -750,9 +751,9 @@ Ui.BarWidget {
     anchors.bottom: parent.bottom
     anchors.rightMargin: Style.space(1)
     anchors.bottomMargin: Style.space(1)
-    color: root.transitioning ? "transparent" : root.needsAttention ? Color.urgent
+    color: root.transitioning ? "transparent" : root.needsAttention ? Commons.Color.urgent
       : root.snapshot.state === "connected" ? button.foreground : "transparent"
     border.width: root.transitioning ? 1 : 0
-    border.color: Color.accent
+    border.color: Commons.Color.accent
   }
 }

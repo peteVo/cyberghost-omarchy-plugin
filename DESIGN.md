@@ -45,7 +45,8 @@ and [SECURITY.md](SECURITY.md) for measured limits.
 
 Qt lint completed without syntax or import errors; it reports 53
 missing-property and 8 block-scope declaration warnings. Lint does not verify
-rendering. A fresh second-PC Omarchy 4 VM remains untested.
+rendering. That earlier pass did not include a second-PC VM; later TryOmarchy
+evidence is recorded in TESTING.md.
 
 
 The 0.6 candidate uses a single GhostIcon component for both toolbar and
@@ -110,3 +111,16 @@ and Escape checks passed with mock state in the existing shell. One correction
 made the update result scroll into view. Final confirmation captures were
 inspected; keep them private. Actual API6 network acceptance is recorded
 separately in TESTING.md. The shared ghost proportions remain unchanged.
+
+The independent TryOmarchy runtime 4.0.4-10 / Qt 6.12 pass exposed a palette
+name collision: QtQuick now exports `Color`, so the plugin's unqualified
+references produced undefined colors and black text on dark popups. Both
+panel and toolbar now use the explicit `Commons.Color` singleton, including
+report selection, attention and transition colors. Native controls, layout,
+shared GhostIcon geometry and internal toolbar opticalScale remain unchanged.
+The first post-patch visual batch still rendered cached pre-patch components;
+it is not counted as a successful visual verification. After one explicitly
+approved native shell restart, the confirmation batch passed dark/light
+Locations, Details, Settings and selected report rendering, with zero new
+plugin binding errors. The original theme palette was restored; captures
+remain private. See TESTING.md for the remaining acceptance gaps.

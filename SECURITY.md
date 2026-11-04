@@ -123,7 +123,8 @@ same host. Earlier 0.4 Wi-Fi handoff, suspend/resume and native UI checks
 passed; they were not all repeated for 0.5. Package helper interruption,
 firewall and DNS namespace checks passed. Automated CI uses Python 3.12 and
 3.14 with mocks; package integration tests skip without a private package.
-Fresh wider-machine validation has not been completed.
+Broader independent validation remains incomplete; the later TryOmarchy guest
+results and remaining gaps are recorded in TESTING.md.
 
 The earlier 0.4 IPv6 RA default-route loss cause remains unknown. IPv6 routing
 returned before 0.5 testing without a plugin route, RA or firewall change.
@@ -133,7 +134,9 @@ remained on the physical route. The legacy test profile had a revoked provider-s
 no working fallback was claimed for it. Other explicitly selected
 OpenVPN profiles remain supported, subject to local UUID/type validation.
 
-No fresh second-machine VM result is available. A VM cannot establish physical
+The later TryOmarchy guest pass exercised independent installation, bounded
+WireGuard switching/recovery and disposable namespace policy checks; it did not
+complete all live acceptance paths. A VM cannot establish physical
 Wi-Fi roaming or laptop suspend/resume behavior. Report every untested path as
 untested. No general privacy or leak-protection guarantee is made.
 
@@ -218,3 +221,12 @@ A normal NetworkManager reapply did not restore one. IPv6 recovery is therefore
 unconfirmed for this final run; neither a plugin regression nor network-side
 IPv6 availability was established. No static route, RA, DNS, firewall or IPv6
 configuration workaround was applied.
+
+The unreleased TryOmarchy compatibility fix changes only native palette
+qualification and allowlisted local version parsing. It accepts the fixed
+`try-omarchy-runtime` provider only for the existing `omarchy` report key;
+unknown providers and malformed versions remain null. It adds no report keys,
+vendor/account queries, public-IP requests or privileged operations. The
+1.5.0-10/API6 helper, vendor executable, resolver patch, Polkit policy and
+package recipe are unchanged. This fix does not extend the prior VPN or
+protection evidence; the guest lacked a working public IPv6 baseline.

@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Controls as Controls
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui as Ui
 
 Ui.Panel {
@@ -34,7 +35,7 @@ Ui.Panel {
     return item && typeof item.placeholderText === "string" ? item.placeholderText : ""
   }
   property string section: "locations"
-  readonly property color ink: Color.popups.text
+  readonly property color ink: Commons.Color.popups.text
   readonly property bool connected: vpn && vpn.snapshot.state === "connected"
   readonly property bool canDisconnect: vpn && vpn.snapshot.can_disconnect === true
   readonly property bool dynamicReady: vpn && vpn.dynamicMode
@@ -201,7 +202,7 @@ Ui.Panel {
               GhostIcon {
                 implicitWidth: Style.font.display
                 implicitHeight: implicitWidth
-                color: root.vpn && root.vpn.transitioning ? Color.accent : root.vpn && root.vpn.needsAttention ? Color.urgent
+                color: root.vpn && root.vpn.transitioning ? Commons.Color.accent : root.vpn && root.vpn.needsAttention ? Commons.Color.urgent
                   : root.connected ? (root.ink.r + root.ink.g + root.ink.b < 1.5 ? "#866200" : "#ffcf36") : root.ink
               }
             }
@@ -701,7 +702,7 @@ Ui.Panel {
               selectByMouse: true
               wrapMode: TextEdit.Wrap
               color: root.ink
-              selectionColor: Style.selectionFillFor(root.ink, Color.accent)
+              selectionColor: Style.selectionFillFor(root.ink, Commons.Color.accent)
               selectedTextColor: root.ink
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall

@@ -180,7 +180,9 @@ def diagnostics(backend, checks=None):
             value = run(["/usr/bin/pacman", "-Q", name], timeout=3).strip()
         except BridgeError:
             continue
-        match = re.fullmatch(re.escape(name) + r" ([0-9][A-Za-z0-9.+_:~\-]{0,63})", value)
+        # TryOmarchy provides omarchy under its fixed runtime package name.
+        package_name = r"(?:omarchy|try-omarchy-runtime)" if name == "omarchy" else re.escape(name)
+        match = re.fullmatch(package_name + r" ([0-9][A-Za-z0-9.+_:~\-]{0,63})", value)
         if match:
             packages[name] = match[1]
     return {"schema": 1, "plugin_version": version, "helper_api": helper_api(),

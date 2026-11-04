@@ -23,12 +23,14 @@ Requirements: x86-64 Linux, Omarchy 4, its native Quickshell, NetworkManager and
 3.12+. The supported target is Omarchy 4; vanilla Arch with GNOME/KDE is not a
 supported configuration. The tested stack is Omarchy 4.0.6-1,
 Quickshell 0.3.2.r7.g2b4501a-1, NetworkManager 1.58.1-2 and systemd 262.1-1.
-Fresh wider-machine validation is pending.
+A later independent TryOmarchy guest pass and its remaining acceptance gaps
+are recorded in [TESTING.md](TESTING.md).
 
 | Environment | Status |
 | --- | --- |
 | The x86-64 ThinkPad stack listed above | Tested locally |
-| Other Omarchy 4 installations with the same APIs and resolved setup | Targeted; independent validation pending |
+| TryOmarchy runtime 4.0.4-10 / Qt 6.12 | Independent installation and bounded guest tests; compatibility fixes below |
+| Other Omarchy 4 installations with the same APIs and resolved setup | Broader validation pending |
 | GNOME, KDE or plain Hyprland without Omarchy shell | No compatible frontend |
 | ARM, other resolver implementations or altered helper paths | Unsupported official-client setup |
 
@@ -133,6 +135,14 @@ provider. A saved local profile alone does not prove its provider entry is usabl
 
 ## Troubleshooting
 
+The unreleased TryOmarchy compatibility fix qualifies the native palette as
+`Commons.Color`, avoiding Qt 6.12's new `Color` singleton. The published
+`v0.8.0-beta.1` can render black text and a black panel ghost in dark themes
+on that stack. The fix also recognizes the fixed `try-omarchy-runtime`
+package provider when reporting the Omarchy version; the diagnostic schema
+and allowlist remain unchanged. A running shell may retain previously loaded
+QML after a plugin rescan; see the verification notes in [TESTING.md](TESTING.md).
+
 - **Needs attention:** fix the named prerequisite locally, then use Settings →
   **Refresh diagnostics**. The plugin does not start services or replace DNS
   configuration automatically.
@@ -189,7 +199,8 @@ cases; same-profile Wi-Fi down/up retained the tunnel and restored bound IPv4.
 Full-guard switching was refused without changing the session. See
 [TESTING.md](TESTING.md) and [SECURITY.md](SECURITY.md) for suspend evidence,
 bootstrap/DNS limits and unresolved distribution constraints. Fresh VM testing
-was explicitly excluded.
+was excluded from that developer session; the later TryOmarchy pass is recorded
+separately in [TESTING.md](TESTING.md).
 
 Final host check: the VPN and guard were absent, NetworkManager/resolved were
 active, the resolved stub link was unchanged, IPv6 disable flags were zero,
@@ -208,7 +219,7 @@ networking. Run `python3 -m unittest discover -s tests -v`,
 `bash -n tools/host-baseline.sh tools/build-client.sh`,
 `omarchy plugin validate .`, and Qt6 `qmllint` with the `qs` import mapping
 documented in [TESTING.md](TESTING.md). Package tests skip unless
-`CG_TEST_PACKAGE` points to a private locally built package. The 0.8 source candidate passes 158 Python tests with its private built
+`CG_TEST_PACKAGE` points to a private locally built package. The compatibility-fix branch passes 159 Python tests with its private built
 package and no skips, plus 28 Node UI-logic tests. Static checks do not
 validate live VPN behavior or native rendering.
 
