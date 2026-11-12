@@ -36,6 +36,17 @@ Official CLI mode also needs the
 reviewed package's Python 3.12+, OpenVPN, WireGuard, resolver, nftables,
 iproute2 and Polkit dependencies.
 
+## Using the panel
+
+Home puts connection state and the circular connect/disconnect control first,
+with requested or client-reported location, the last public IPv4 lookup (or an
+explicit placeholder), protocol and duration. Quick Connect is on Home;
+Locations retains discovery, server selection and switching. Details shows
+health, freshness and verification context. Settings groups Preferences,
+Safety (recovery, kill switch and protection actions) and Support (setup and
+diagnostics). Expand **How recovery works** in Safety for its limits. A
+connected label remains reported state, not proof of traffic protection.
+
 ## Official CLI setup
 
 Official CLI mode needs the reviewed local package. The 0.8 candidate uses
@@ -133,7 +144,7 @@ provider. A saved local profile alone does not prove its provider entry is usabl
 
 ## Troubleshooting
 
-- **Needs attention:** fix the named prerequisite locally, then use Settings →
+- **Needs attention:** fix the named prerequisite locally, then use Settings → Support →
   **Refresh diagnostics**. The plugin does not start services or replace DNS
   configuration automatically.
 - **Authentication or authorization failed:** use the official local setup
@@ -143,7 +154,7 @@ provider. A saved local profile alone does not prove its provider entry is usabl
   this client. The plugin will not overwrite unrelated profiles.
 - **Timeout or interrupted setup:** refresh before retrying; a vendor descendant
   may still be finishing. Use **Restore normal networking** to stop/recover.
-- **Traffic block remains:** Settings → **Release CyberGhost traffic block**
+- **Traffic block remains:** Settings → Safety → **Release CyberGhost traffic block**
   removes only this plugin's guard and allows normal networking. A terminal
   alternative is `pkexec /usr/local/cyberghost/omarchy-bridge --release-protection`.
   Approve authentication locally; never flush unrelated firewall tables.

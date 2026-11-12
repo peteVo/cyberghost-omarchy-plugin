@@ -110,3 +110,36 @@ and Escape checks passed with mock state in the existing shell. One correction
 made the update result scroll into view. Final confirmation captures were
 inspected; keep them private. Actual API6 network acceptance is recorded
 separately in TESTING.md. The shared ghost proportions remain unchanged.
+
+## Connection-home redesign
+
+The connection home adopts the user-approved Windows reference's hierarchy
+within the existing native Omarchy panel. A centered state label and 116-unit
+circular power control lead, followed by the requested/client-reported location,
+an explicit public IPv4 lookup placeholder or last result, protocol and duration.
+The location row opens Locations. Quick Connect lives on Home; discovery,
+server selection and switching remain in Locations. Details retains health,
+freshness and verification context. A connected appearance remains reported
+state, not a protection claim.
+
+Settings separates Preferences, Safety and Support. Safety contains recovery,
+its expandable explanation, kill-switch configuration and explicit protection
+actions; Support contains setup and the allowlisted report. Existing controls
+and backend behavior are retained. Keep the small shared ghost, Omarchy font,
+palette and interaction tokens, 360-unit width and scrolling above 550 units.
+This is a hierarchy change within the incumbent system, with no new visual
+identity, dependencies, helper or package changes.
+
+Actual connected dark/light views, tab and keyboard navigation, and Escape
+passed in the existing native shell. Temporary mock-backend native fixtures
+also passed disconnected Home, a power-control connect/disconnect roundtrip,
+the explicit IP action and long-location dark/light rendering. The actual
+active guard hash was unchanged; the real backend and original theme were
+restored. Python ran 158 tests: 149 passed and nine private-package tests
+skipped without an artifact. All 28 direct Node UI-logic behavior checks
+passed. Qt lint exited 0 with dynamic-property warnings. No real
+connect/disconnect was performed for this redesign; loading and error redesign
+paths remain untested. Earlier evidence above is historical, not a claim that
+every feature was retested. Captures under
+`build/ui-redesign/` remain private and unpublished; this pass adds no network
+protection evidence.

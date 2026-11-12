@@ -33,7 +33,9 @@ Ui.Panel {
     var item = content.Window.window.activeFocusItem
     return item && typeof item.placeholderText === "string" ? item.placeholderText : ""
   }
-  property string section: "locations"
+  property string section: "home"
+  property string settingsSection: "preferences"
+  property bool recoveryHelpExpanded: false
   readonly property color ink: Color.popups.text
   readonly property bool connected: vpn && vpn.snapshot.state === "connected"
   readonly property bool canDisconnect: vpn && vpn.snapshot.can_disconnect === true
@@ -106,6 +108,7 @@ Ui.Panel {
     Qt.callLater(function() { if (root.opened && errorLabel.visible) root.revealFocus(errorLabel) })
   }
   function revealReport() {
+    settingsSection = "support"
     Qt.callLater(function() { if (root.opened && reportScroll.visible) root.revealFocus(reportScroll) })
   }
   function revealUpdates() {
@@ -195,7 +198,7 @@ Ui.Panel {
 
           Ui.PanelHero {
             title: "CyberGhost VPN"
-            meta: root.vpn ? root.vpn.stateText : "Checking connection…"
+            meta: ""
             foreground: root.ink
             iconComponent: Component {
               GhostIcon {
@@ -210,87 +213,22 @@ Ui.Panel {
           Ui.ButtonGroup {
             objectName: "vpnSectionTabs"
             width: parent.width
-            options: [{ value: "locations", label: "Locations" }, { value: "details", label: "Details" }, { value: "settings", label: "Settings" }]
+            options: [{ value: "home", label: "Home" }, { value: "locations", label: "Locations" }, { value: "details", label: "Details" }, { value: "settings", label: "Settings" }]
             value: root.section
             foreground: root.ink
             onChanged: function(value) { root.selectSection(value) }
-          }
-          Label {
-            text: root.locationSummary()
-            font.pixelSize: Style.font.bodySmall
-          }
-          Label {
-            text: (root.vpn && root.vpn.snapshot.protocol ? "Reported protocol · " : "Protocol · ")
-              + (root.vpn && root.vpn.snapshot.protocol ? root.vpn.snapshot.protocol : "Not reported")
-            font.pixelSize: Style.font.bodySmall
-          }
-          Label {
-            text: (root.vpn && root.vpn.snapshot.server_source === "requested" ? "Requested server · "
-              : root.vpn && root.vpn.snapshot.server_source === "client" ? "Reported server · " : "Server · ")
-              + (root.vpn && root.vpn.snapshot.server ? root.vpn.snapshot.server : "Not reported")
-            font.pixelSize: Style.font.bodySmall
-          }
-          Label {
-            visible: root.vpn && root.vpn.publicIp.length > 0
-            text: "Public IPv4 · " + (root.vpn ? root.vpn.publicIp + " (last lookup)" : "")
-            font.pixelSize: Style.font.bodySmall
-          }
-          Label {
-            objectName: "vpnHealthSummary"
-            text: root.healthLabel()
-            font.pixelSize: Style.font.bodySmall
-          }
-          Label {
-            visible: root.vpn && root.vpn.statusStale && !root.vpn.statusFailed && root.vpn.lastStatusAt > 0
-            text: "Last successful status · " + (root.vpn ? root.vpn.ageLabel(root.vpn.lastStatusAt) : "Not checked")
-            font.pixelSize: Style.font.bodySmall
           }
           Action {
             objectName: "vpnSetupShortcut"
             visible: root.vpn && !root.vpn.setupReady
             text: "Complete setup"
-            onClicked: { root.selectSection("settings"); Qt.callLater(function() { root.revealFocus(setupHeader) }) }
-          }
-          Label {
-            visible: root.dynamicReady
-            text: root.vpn && root.vpn.snapshot.state === "recovery-required" ? "Protection unconfirmed · Restore or verify in Settings."
-              : root.vpn && root.vpn.snapshot.kill_switch === true ? "Kill switch configured · Verify in Settings"
-              : root.vpn && root.vpn.snapshot.ipv6_guard === true ? "IPv6 guard configured · No kill switch"
-              : root.vpn && (root.vpn.snapshot.protocol === "OpenVPN" || (!root.connected && root.vpn.selectedProtocol !== "wireguard")) ? "Automatic/OpenVPN does not enable the IPv6 guard. Native IPv6 may bypass the VPN. Prefer WireGuard."
-              : root.connected ? "Protection is not recorded. Check the client setup."
-              : "Protection starts after connection. Check Settings."
-            font.pixelSize: Style.font.bodySmall
-          }
-          Label {
-            visible: root.dynamicReady && root.canDisconnect
-            text: root.vpn && (root.vpn.snapshot.kill_switch === true || root.vpn.killSwitch)
-              ? "Full kill-switch switching is unavailable. The block is retained; disconnect deliberately before starting a new connection."
-              : root.vpn && root.vpn.snapshot.can_switch === true && root.vpn.selectedProtocol === "wireguard"
-              ? "Switching retains IPv6 guarding. IPv4 and resolver bootstrap DNS can leave during the transition."
-              : "Switching needs helper API 5 and an active IPv6-guarded WireGuard session. Disconnect before changing protocols."
-            font.pixelSize: Style.font.bodySmall
+            onClicked: { root.settingsSection = "support"; root.selectSection("settings"); Qt.callLater(function() { root.revealFocus(setupHeader) }) }
           }
           Label {
             visible: root.vpn && !root.canDisconnect && root.vpn.setupMessage.length > 0
               && root.vpn.setupMessage !== root.vpn.message
             text: root.vpn ? root.vpn.setupMessage : ""
             Accessible.role: Accessible.AlertMessage
-          }
-          Action {
-            objectName: "vpnQuickConnect"
-            visible: root.section === "locations" && root.dynamicReady && !root.canDisconnect
-            width: parent.width
-            text: root.vpn && root.vpn.quickConnecting ? "Checking saved location…" : "Quick Connect"
-            enabled: root.vpn && !root.vpn.working && !root.vpn.protocolRefresh && root.vpn.setupReady
-              && root.vpn.snapshot.state === "disconnected" && root.vpn.snapshot.can_connect === true && !!root.vpn.quickTarget
-            onClicked: root.vpn.quickConnect()
-          }
-          Label {
-            visible: root.section === "locations" && root.dynamicReady && !root.canDisconnect
-            text: root.vpn && root.vpn.quickTarget ? "Quick Connect · " + root.favoriteLabel(root.vpn.quickTarget)
-              : root.vpn && root.vpn.quickTargetKey ? "Quick Connect favorite unavailable. Choose another in Settings."
-              : "Connect once or choose a favorite in Settings to enable Quick Connect."
-            font.pixelSize: Style.font.bodySmall
           }
           Action {
             objectName: "vpnCancelQuickConnect"
@@ -300,6 +238,7 @@ Ui.Panel {
           }
           Action {
             objectName: "vpnConnectAction"
+            visible: root.section === "locations"
             width: parent.width
             text: root.vpn && root.vpn.busy ? root.vpn.stateText
               : root.vpn && (root.vpn.snapshot.state === "blocked" || root.vpn.snapshot.state === "recovery-required") ? "Restore normal networking"
@@ -313,7 +252,7 @@ Ui.Panel {
             onClicked: root.vpn.invoke(root.canDisconnect ? "disconnect" : "connect")
           }
           Action {
-            visible: root.dynamicReady && root.canDisconnect
+            visible: root.section === "locations" && root.dynamicReady && root.canDisconnect
             width: parent.width
             objectName: "vpnSwitchAction"
             text: "Switch location"
@@ -332,6 +271,114 @@ Ui.Panel {
             text: "Retry status"
             enabled: root.vpn && !root.vpn.working
             onClicked: root.vpn.refresh()
+          }
+
+          Column {
+            visible: root.section === "home"
+            width: parent.width
+            spacing: Style.space(16)
+            Item { width: 1; height: Style.space(4) }
+            Label {
+              text: root.vpn ? root.vpn.stateText : "Checking connection…"
+              horizontalAlignment: Text.AlignHCenter
+              font.pixelSize: Style.font.heading
+            }
+            Action {
+              id: power
+              objectName: "vpnPowerAction"
+              anchors.horizontalCenter: parent.horizontalCenter
+              width: Style.space(116)
+              height: width
+              radius: width / 2
+              bordered: true
+              foreground: root.connected ? (root.ink.r + root.ink.g + root.ink.b < 1.5 ? "#866200" : "#ffcf36") : root.ink
+              selected: root.connected
+              enabled: root.vpn && !root.vpn.working && (root.canDisconnect
+                || (root.vpn.setupReady && root.vpn.snapshot.can_connect === true && (!root.dynamicReady || root.targetReady())))
+              Accessible.name: root.vpn && ["blocked", "recovery-required"].indexOf(root.vpn.snapshot.state) >= 0 ? "Restore normal networking" : root.canDisconnect ? "Disconnect VPN" : "Connect selected location"
+              tooltipText: Accessible.name
+              onClicked: root.vpn.invoke(root.canDisconnect ? "disconnect" : "connect")
+              Canvas {
+                anchors.centerIn: parent
+                width: Style.space(40); height: width
+                property color ink: power.foreground
+                onInkChanged: requestPaint()
+                onPaint: {
+                  const ctx = getContext("2d")
+                  ctx.reset()
+                  ctx.strokeStyle = ink
+                  ctx.lineWidth = 2.5
+                  ctx.lineCap = "round"
+                  ctx.beginPath()
+                  ctx.arc(width / 2, height / 2 + 2, width * 0.34, -Math.PI * 0.3, Math.PI * 1.3)
+                  ctx.stroke()
+                  ctx.beginPath()
+                  ctx.moveTo(width / 2, 3)
+                  ctx.lineTo(width / 2, height * 0.48)
+                  ctx.stroke()
+                }
+              }
+            }
+            Label {
+              text: root.vpn && root.vpn.busy ? root.vpn.stateText
+                : root.vpn && ["blocked", "recovery-required"].indexOf(root.vpn.snapshot.state) >= 0 ? "Restore normal networking" : root.canDisconnect ? "Click to disconnect" : "Click to connect"
+              horizontalAlignment: Text.AlignHCenter
+              font.pixelSize: Style.font.bodySmall
+            }
+            Action {
+              objectName: "vpnLocationShortcut"
+              bordered: true
+              width: parent.width
+              text: root.locationSummary()
+              // The accessible full description retains reported/requested provenance.
+              Accessible.name: root.locationSummary() + ". Choose a location"
+              tooltipText: "Choose a location"
+              onClicked: root.selectSection("locations")
+            }
+            Label {
+              horizontalAlignment: Text.AlignHCenter
+              text: root.vpn && root.vpn.publicIp ? "Last IPv4 · " + root.vpn.publicIp + " · " + root.vpn.ageLabel(root.vpn.publicIpAt)
+                : "VPN IPv4 · Not checked"
+              font.pixelSize: Style.font.bodySmall
+            }
+            Row {
+              width: parent.width
+              spacing: Style.space(12)
+              Column {
+                width: (parent.width - parent.spacing) / 2
+                spacing: Style.space(4)
+                Label { text: "Protocol"; font.pixelSize: Style.font.bodySmall; horizontalAlignment: Text.AlignHCenter }
+                Label { text: root.vpn && root.vpn.snapshot.protocol ? root.vpn.snapshot.protocol : "—"; horizontalAlignment: Text.AlignHCenter }
+              }
+              Column {
+                width: (parent.width - parent.spacing) / 2
+                spacing: Style.space(4)
+                Label { text: "Duration"; font.pixelSize: Style.font.bodySmall; horizontalAlignment: Text.AlignHCenter }
+                Label { text: root.connected && root.vpn && typeof root.vpn.snapshot.duration === "number" ? root.durationLabel(root.vpn.snapshot.duration) : "—"; horizontalAlignment: Text.AlignHCenter }
+              }
+            }
+            Label {
+              text: root.vpn && (root.vpn.statusStale || root.vpn.statusFailed || root.vpn.needsAttention)
+                ? root.healthLabel() : "Reported connection · Verification in Details"
+              horizontalAlignment: Text.AlignHCenter
+              font.pixelSize: Style.font.bodySmall
+            }
+          Action {
+            objectName: "vpnQuickConnect"
+            visible: root.section === "home" && root.dynamicReady && !root.canDisconnect
+            width: parent.width
+            text: root.vpn && root.vpn.quickConnecting ? "Checking saved location…" : "Quick Connect"
+            enabled: root.vpn && !root.vpn.working && !root.vpn.protocolRefresh && root.vpn.setupReady
+              && root.vpn.snapshot.state === "disconnected" && root.vpn.snapshot.can_connect === true && !!root.vpn.quickTarget
+            onClicked: root.vpn.quickConnect()
+          }
+          Label {
+            visible: root.section === "home" && root.dynamicReady && !root.canDisconnect
+            text: root.vpn && root.vpn.quickTarget ? "Quick Connect · " + root.favoriteLabel(root.vpn.quickTarget)
+              : root.vpn && root.vpn.quickTargetKey ? "Quick Connect favorite unavailable. Choose another in Settings."
+              : "Connect once or choose a favorite in Settings to enable Quick Connect."
+            font.pixelSize: Style.font.bodySmall
+          }
           }
 
           Column {
@@ -453,6 +500,35 @@ Ui.Panel {
             spacing: Style.spacing.controlGap
             Ui.PanelSeparator { foreground: root.ink }
             Ui.PanelSectionHeader { text: "Connection details"; foreground: root.ink }
+          Label {
+            objectName: "vpnHealthSummary"
+            text: root.healthLabel()
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label {
+            visible: root.vpn && root.vpn.statusStale && !root.vpn.statusFailed && root.vpn.lastStatusAt > 0
+            text: "Last successful status · " + (root.vpn ? root.vpn.ageLabel(root.vpn.lastStatusAt) : "Not checked")
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label {
+            visible: root.dynamicReady
+            text: root.vpn && root.vpn.snapshot.state === "recovery-required" ? "Protection unconfirmed · Restore or verify in Settings."
+              : root.vpn && root.vpn.snapshot.kill_switch === true ? "Kill switch configured · Verify in Settings"
+              : root.vpn && root.vpn.snapshot.ipv6_guard === true ? "IPv6 guard configured · No kill switch"
+              : root.vpn && (root.vpn.snapshot.protocol === "OpenVPN" || (!root.connected && root.vpn.selectedProtocol !== "wireguard")) ? "Automatic/OpenVPN does not enable the IPv6 guard. Native IPv6 may bypass the VPN. Prefer WireGuard."
+              : root.connected ? "Protection is not recorded. Check the client setup."
+              : "Protection starts after connection. Check Settings."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label {
+            visible: root.dynamicReady && root.canDisconnect
+            text: root.vpn && (root.vpn.snapshot.kill_switch === true || root.vpn.killSwitch)
+              ? "Full kill-switch switching is unavailable. The block is retained; disconnect deliberately before starting a new connection."
+              : root.vpn && root.vpn.snapshot.can_switch === true && root.vpn.selectedProtocol === "wireguard"
+              ? "Switching retains IPv6 guarding. IPv4 and resolver bootstrap DNS can leave during the transition."
+              : "Switching needs helper API 5 and an active IPv6-guarded WireGuard session. Disconnect before changing protocols."
+            font.pixelSize: Style.font.bodySmall
+          }
             Label { text: "Status updated · " + (root.vpn ? root.vpn.ageLabel(root.vpn.lastStatusAt) : "Not checked") }
             Label { text: root.vpn && root.vpn.verificationAt ? "Protection check · " + root.vpn.ageLabel(root.vpn.verificationAt) : "Protection · Not checked for this observed session" }
             Label { text: root.vpn && root.vpn.protectionCheck ? root.vpn.protectionCheck : "A tunnel and route do not establish handshakes, DNS/IPv6 protection or provider identity."; font.pixelSize: Style.font.bodySmall }
@@ -491,27 +567,19 @@ Ui.Panel {
             spacing: Style.spacing.controlGap
             Ui.PanelSeparator { foreground: root.ink }
             Ui.PanelSectionHeader { text: "Settings & diagnostics"; foreground: root.ink }
-          Ui.PanelSectionHeader { text: "Recovery"; foreground: root.ink }
-          Ui.Toggle {
-            objectName: "vpnRecoveryToggle"
-            visible: root.dynamicReady
+          Ui.ButtonGroup {
+            objectName: "vpnSettingsTabs"
             width: parent.width
-            label: "Recovery for this shell session"
-            checked: root.vpn && root.vpn.recoveryEnabled
-            enabled: root.vpn && !root.vpn.working
+            options: [{ value: "preferences", label: "Preferences" }, { value: "safety", label: "Safety" }, { value: "support", label: "Support" }]
+            value: root.settingsSection
             foreground: root.ink
-            onClicked: root.vpn.setRecovery(!root.vpn.recoveryEnabled)
+            onChanged: function(value) { root.settingsSection = value; Qt.callLater(function() { scroll.contentY = 0 }) }
           }
-          Label {
-            visible: root.dynamicReady
-            text: root.vpn ? root.vpn.recoveryMessage : "Off"
-            font.pixelSize: Style.font.bodySmall
-          }
-          Label {
-            visible: root.dynamicReady
-            text: "Enable before connecting. Keeps an existing tunnel while waiting for Wi-Fi, then allows up to two reconnect attempts only after fresh safe status. Authorization may be required. Disconnects and selection changes cancel recovery. Guarded retries require helper API 6 and the same confirmed target; a full traffic block needs manual recovery. Disable before managing the VPN elsewhere."
-            font.pixelSize: Style.font.bodySmall
-          }
+
+          Column {
+            width: parent.width
+            spacing: Style.spacing.controlGap
+            visible: root.settingsSection === "preferences"
           Ui.PanelSectionHeader { text: "Installed versions"; foreground: root.ink }
           Label {
             text: root.vpn && root.vpn.versionReport ? "Plugin · " + root.vpn.versionReport.plugin_version
@@ -619,6 +687,98 @@ Ui.Panel {
             enabled: root.vpn && !root.vpn.working && !root.canDisconnect && profileField.text.length > 0
             onClicked: root.vpn.selectProfile(profileField.text)
           }
+
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.spacing.controlGap
+            visible: root.settingsSection === "safety"
+          Ui.PanelSectionHeader { text: "Recovery"; foreground: root.ink }
+          Ui.Toggle {
+            objectName: "vpnRecoveryToggle"
+            visible: root.dynamicReady
+            width: parent.width
+            label: "Recovery for this shell session"
+            checked: root.vpn && root.vpn.recoveryEnabled
+            enabled: root.vpn && !root.vpn.working
+            foreground: root.ink
+            onClicked: root.vpn.setRecovery(!root.vpn.recoveryEnabled)
+          }
+          Label {
+            visible: root.dynamicReady
+            text: root.vpn ? root.vpn.recoveryMessage : "Off"
+            font.pixelSize: Style.font.bodySmall
+          }
+          Action {
+            objectName: "vpnRecoveryHelp"
+            visible: root.dynamicReady
+            text: root.recoveryHelpExpanded ? "Hide recovery details" : "How recovery works"
+            onClicked: root.recoveryHelpExpanded = !root.recoveryHelpExpanded
+          }
+          Label {
+            visible: root.dynamicReady && root.recoveryHelpExpanded
+            text: "Enable before connecting. Keeps an existing tunnel while waiting for Wi-Fi, then allows up to two reconnect attempts only after fresh safe status. Authorization may be required. Disconnects and selection changes cancel recovery. Guarded retries require helper API 6 and the same confirmed target; a full traffic block needs manual recovery. Disable before managing the VPN elsewhere."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Ui.Toggle {
+            objectName: "vpnKillSwitchToggle"
+            visible: root.dynamicReady
+            width: parent.width
+            label: "Kill switch · WireGuard"
+            checked: root.vpn && (root.canDisconnect ? root.vpn.snapshot.kill_switch === true : root.vpn.killSwitch)
+            enabled: root.vpn && !root.vpn.working && !root.canDisconnect
+              && (root.vpn.selectedProtocol === "wireguard" || checked)
+            opacity: enabled ? 1 : 0.5
+            foreground: root.ink
+            Accessible.role: Accessible.CheckBox
+            Accessible.name: label
+            Accessible.checkable: true
+            Accessible.checked: checked
+            onClicked: root.vpn.setKillSwitch(!checked)
+          }
+          Label {
+            visible: root.dynamicReady
+            text: "Starts after connection. Unexpected tunnel loss retains the block. Disconnect releases it; full kill-switch location switches are refused."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label {
+            visible: root.dynamicReady && root.vpn && root.vpn.killSwitch && root.vpn.selectedProtocol !== "wireguard"
+            text: "Choose WireGuard or turn off the kill switch before connecting."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Action {
+            objectName: "vpnVerifyProtection"
+            visible: root.vpn && root.vpn.snapshot.can_release_protection === true
+            text: "Verify traffic protection"
+            enabled: root.vpn && !root.vpn.working
+            onClicked: root.vpn.invoke("verify-protection")
+          }
+          Label {
+            visible: root.vpn && root.vpn.protectionCheck.length > 0
+            text: root.vpn ? root.vpn.protectionCheck : ""
+            font.pixelSize: Style.font.bodySmall
+          }
+          Action {
+            objectName: "vpnReleaseProtection"
+            visible: root.vpn && root.vpn.snapshot.can_release_protection === true
+              && root.vpn.snapshot.state !== "connected" && root.vpn.snapshot.state !== "waiting-network"
+            text: "Release CyberGhost traffic block"
+            enabled: root.vpn && !root.vpn.working
+            onClicked: root.vpn.invoke("release-protection")
+          }
+          Label {
+            visible: root.vpn && root.vpn.snapshot.can_release_protection === true
+            text: "Releasing the block allows normal networking without disconnecting other VPNs."
+            font.pixelSize: Style.font.bodySmall
+          }
+          Label { text: "Recovery is session-only, never enabled at login. Preferences and favorites are saved locally."; font.pixelSize: Style.font.bodySmall }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.spacing.controlGap
+            visible: root.settingsSection === "support"
           Action {
             objectName: "vpnRefreshDiagnostics"
             text: root.vpn && root.vpn.working ? "Checking…" : "Refresh diagnostics"
@@ -709,58 +869,9 @@ Ui.Panel {
               Accessible.name: "Shareable diagnostic report"
             }
           }
-          Ui.Toggle {
-            objectName: "vpnKillSwitchToggle"
-            visible: root.dynamicReady
-            width: parent.width
-            label: "Kill switch · WireGuard"
-            checked: root.vpn && (root.canDisconnect ? root.vpn.snapshot.kill_switch === true : root.vpn.killSwitch)
-            enabled: root.vpn && !root.vpn.working && !root.canDisconnect
-              && (root.vpn.selectedProtocol === "wireguard" || checked)
-            opacity: enabled ? 1 : 0.5
-            foreground: root.ink
-            Accessible.role: Accessible.CheckBox
-            Accessible.name: label
-            Accessible.checkable: true
-            Accessible.checked: checked
-            onClicked: root.vpn.setKillSwitch(!checked)
+
           }
-          Label {
-            visible: root.dynamicReady
-            text: "Starts after connection. Unexpected tunnel loss retains the block. Disconnect releases it; full kill-switch location switches are refused."
-            font.pixelSize: Style.font.bodySmall
-          }
-          Label {
-            visible: root.dynamicReady && root.vpn && root.vpn.killSwitch && root.vpn.selectedProtocol !== "wireguard"
-            text: "Choose WireGuard or turn off the kill switch before connecting."
-            font.pixelSize: Style.font.bodySmall
-          }
-          Action {
-            objectName: "vpnVerifyProtection"
-            visible: root.vpn && root.vpn.snapshot.can_release_protection === true
-            text: "Verify traffic protection"
-            enabled: root.vpn && !root.vpn.working
-            onClicked: root.vpn.invoke("verify-protection")
-          }
-          Label {
-            visible: root.vpn && root.vpn.protectionCheck.length > 0
-            text: root.vpn ? root.vpn.protectionCheck : ""
-            font.pixelSize: Style.font.bodySmall
-          }
-          Action {
-            objectName: "vpnReleaseProtection"
-            visible: root.vpn && root.vpn.snapshot.can_release_protection === true
-              && root.vpn.snapshot.state !== "connected" && root.vpn.snapshot.state !== "waiting-network"
-            text: "Release CyberGhost traffic block"
-            enabled: root.vpn && !root.vpn.working
-            onClicked: root.vpn.invoke("release-protection")
-          }
-          Label {
-            visible: root.vpn && root.vpn.snapshot.can_release_protection === true
-            text: "Releasing the block allows normal networking without disconnecting other VPNs."
-            font.pixelSize: Style.font.bodySmall
-          }
-          Label { text: "Recovery is session-only, never enabled at login. Preferences and favorites are saved locally."; font.pixelSize: Style.font.bodySmall }
+
         }
       }
     }
