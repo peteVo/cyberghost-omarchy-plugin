@@ -234,3 +234,13 @@ exited 0 with dynamic-property warnings. No real connect/disconnect was
 performed; loading and error redesign paths remain untested. Private captures
 under `build/ui-redesign/` are unpublished. These interface checks add no
 network-protection evidence and do not repeat all earlier feature tests.
+
+Home traffic totals read only the selected tunnel's kernel interface counters,
+without privilege or additional commands beyond the existing link observation.
+Counters are not persisted or included in the shareable diagnostic report.
+They reset with interface recreation and do not prove delivery, provider billing
+or privacy protection. Unknown/stale values remain unknown. The Home IP action
+uses the existing explicit third-party, tunnel-bound IPv4 lookup; it does not
+add automatic requests. Connected native dark/light and actual Home lookup
+checks preserved the pre-existing guard and restored the theme; no new VPN
+transition or packet-protection test was performed.

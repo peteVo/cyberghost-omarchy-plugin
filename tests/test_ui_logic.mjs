@@ -557,3 +557,14 @@ test('guarded recovery pauses for a full block, changed generation or untrusted 
     assert.equal(w.calls.later.length, 0);
   }
 });
+
+test('Home byte labels distinguish zero, unknown and binary units', () => {
+  const panel = readFileSync(new URL('../Panel.qml', import.meta.url), 'utf8');
+  const source = panel.match(/^  function byteLabel\([^\n]*\) \{[\s\S]*?^  \}/m)[0];
+  const format = vm.runInNewContext('(' + source + ')');
+  assert.equal(format(0), '0 B');
+  assert.equal(format(1024), '1.0 KiB');
+  assert.equal(format(1048576), '1.0 MiB');
+  for (const value of [undefined, null, -1, NaN, Infinity, '1024', 2 ** 53])
+    assert.equal(format(value), '—');
+});
