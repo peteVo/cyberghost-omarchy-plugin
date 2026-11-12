@@ -218,3 +218,19 @@ A normal NetworkManager reapply did not restore one. IPv6 recovery is therefore
 unconfirmed for this final run; neither a plugin regression nor network-side
 IPv6 availability was established. No static route, RA, DNS, firewall or IPv6
 configuration workaround was applied.
+
+The subsequent connection-home redesign changes panel hierarchy only. Existing
+backend, helper, package and security behavior are unchanged. Requested/reported
+location, lookup placeholders and Details keep observations distinct from
+verification; Safety retains the protection controls and an expandable recovery
+explanation. Connected native dark/light views, tab and keyboard navigation,
+and Escape passed. Temporary mock-backend native fixtures passed disconnected
+Home, a power-control connect/disconnect roundtrip, the explicit IP action and
+long-location dark/light rendering. The actual pre-existing VPN and active
+guard hash were unchanged; the real backend and original theme were restored.
+Python ran 158 tests: 149 passed and nine private-package tests skipped without
+an artifact. All 28 direct Node UI-logic behavior checks passed, and Qt lint
+exited 0 with dynamic-property warnings. No real connect/disconnect was
+performed; loading and error redesign paths remain untested. Private captures
+under `build/ui-redesign/` are unpublished. These interface checks add no
+network-protection evidence and do not repeat all earlier feature tests.
