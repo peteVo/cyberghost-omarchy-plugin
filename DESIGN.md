@@ -143,3 +143,16 @@ paths remain untested. Earlier evidence above is historical, not a claim that
 every feature was retested. Captures under
 `build/ui-redesign/` remain private and unpublished; this pass adds no network
 protection evidence.
+
+Home traffic extension: downloaded/uploaded totals sit above protocol/duration
+using the same native two-column layout. Unknown/stale counters stay unknown;
+zero remains a real zero. The explicit IP action stays on Home with last-lookup
+age and a tooltip identifying the third-party service. No automatic IP requests,
+new privileges, dependencies or background processes are introduced.
+
+Connected dark/light Home with real interface counters was inspected in the
+existing shell; the new Home IP action completed a tunnel-bound lookup.
+The active guard was preserved and the original theme restored. The focused
+review found no material issue in this bounded scope. Automated checks ran
+162 Python tests (153 passed, nine private-package skips), 29 Node checks,
+and Qt lint exited 0 with existing warnings. No new VPN transitions were tested.

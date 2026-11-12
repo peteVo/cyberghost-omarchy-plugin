@@ -87,6 +87,13 @@ Ui.Panel {
     var hours = Math.floor(minutes / 60)
     return hours ? hours + "h " + (minutes % 60) + "m" : minutes + "m"
   }
+  function byteLabel(value) {
+    if (typeof value !== "number" || !isFinite(value) || value < 0 || value > 9007199254740991) return "—"
+    const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
+    var unit = 0
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++ }
+    return (unit ? value.toFixed(1) : String(value)) + " " + units[unit]
+  }
   function healthLabel() {
     if (!vpn || vpn.statusFailed) return "Connection health unavailable · Refresh status"
     if (vpn.statusStale) return "Status is stale · Refresh before relying on it"
@@ -335,11 +342,31 @@ Ui.Panel {
               tooltipText: "Choose a location"
               onClicked: root.selectSection("locations")
             }
-            Label {
-              horizontalAlignment: Text.AlignHCenter
+            Action {
+              objectName: "vpnHomeIpAction"
+              width: parent.width
               text: root.vpn && root.vpn.publicIp ? "Last IPv4 · " + root.vpn.publicIp + " · " + root.vpn.ageLabel(root.vpn.publicIpAt)
-                : "VPN IPv4 · Not checked"
-              font.pixelSize: Style.font.bodySmall
+                : root.vpn && root.vpn.pending === "ip" ? "Checking VPN IPv4…" : "Check VPN IPv4"
+              fontSize: Style.font.bodySmall
+              enabled: root.connected && root.vpn && !root.vpn.working
+              tooltipText: "Explicit lookup through the VPN at api.ipify.org. Click to refresh."
+              onClicked: root.vpn.invoke("ip")
+            }
+            Row {
+              width: parent.width
+              spacing: Style.space(12)
+              Column {
+                width: (parent.width - parent.spacing) / 2
+                spacing: Style.space(4)
+                Label { text: "Downloaded"; font.pixelSize: Style.font.bodySmall; horizontalAlignment: Text.AlignHCenter }
+                Label { text: root.connected && root.vpn && !root.vpn.statusStale && !root.vpn.statusFailed ? root.byteLabel(root.vpn.snapshot.download_bytes) : "—"; horizontalAlignment: Text.AlignHCenter }
+              }
+              Column {
+                width: (parent.width - parent.spacing) / 2
+                spacing: Style.space(4)
+                Label { text: "Uploaded"; font.pixelSize: Style.font.bodySmall; horizontalAlignment: Text.AlignHCenter }
+                Label { text: root.connected && root.vpn && !root.vpn.statusStale && !root.vpn.statusFailed ? root.byteLabel(root.vpn.snapshot.upload_bytes) : "—"; horizontalAlignment: Text.AlignHCenter }
+              }
             }
             Row {
               width: parent.width

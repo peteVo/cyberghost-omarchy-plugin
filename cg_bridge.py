@@ -328,9 +328,23 @@ def external_connection(uuid):
     return bool(int(match[1]) & 0x80)
 
 
+def traffic_totals(link):
+    """Kernel interface totals, not provider billing or application payload."""
+    empty = {"download_bytes": None, "upload_bytes": None}
+    stats = link.get("stats64", link.get("stats"))
+    if not isinstance(stats, dict):
+        return empty
+    values = [stats.get(direction, {}).get("bytes") if isinstance(stats.get(direction), dict) else None
+              for direction in ("rx", "tx")]
+    # QML uses IEEE doubles; do not round oversized counters into false precision.
+    if any(type(value) is not int or not 0 <= value <= 2**53 - 1 for value in values):
+        return empty
+    return dict(zip(empty, values))
+
+
 def kernel_tunnel_status(protocol):
     try:
-        links = json.loads(run(["/usr/bin/ip", "-j", "-d", "link", "show"], timeout=8))
+        links = json.loads(run(["/usr/bin/ip", "-s", "-j", "-d", "link", "show"], timeout=8))
         if not isinstance(links, list) or any(not isinstance(item, dict) for item in links):
             raise ValueError
         kinds = ("wireguard",) if protocol == "WireGuard" else ("tun", "ovpn")
@@ -348,7 +362,7 @@ def kernel_tunnel_status(protocol):
     routed = next((item for item in tunnels if "UP" in item.get("flags", [])
                    and any(route.get("dev") == item.get("ifname") for route in routes)), None)
     tunnel = routed or tunnels[0]
-    return {"state": "connected" if routed else "unknown", "protocol": protocol,
+    return {**traffic_totals(tunnel), "state": "connected" if routed else "unknown", "protocol": protocol,
             "tunnel_detected": True, "ipv4_route": bool(routed),
             "device": tunnel.get("ifname", ""), "interface_index": tunnel.get("ifindex"),
             "can_connect": False, "can_disconnect": True, "verified": False,
