@@ -12,6 +12,7 @@ Ui.BarWidget {
   implicitHeight: button.implicitHeight
 
   property var snapshot: ({ backend: "official-cli", state: "unknown", can_connect: false, can_disconnect: false })
+  property var trafficSession: null
   property var discovery: ({ items: [], reason: "" })
   property var cities: ({ items: [], reason: "" })
   property var servers: ({ items: [], reason: "" })
@@ -113,12 +114,84 @@ Ui.BarWidget {
   }
   function clearHealth() {
     stopRecovery("Connection settings changed. Enable recovery for the next connection.")
+    resetTrafficSession()
     lastStatusAt = 0
     statusFailed = false
     verificationAt = 0
     publicIpAt = 0
     protectionCheck = ""
     observedState = ""
+  }
+  function validTrafficBytes(value) {
+    return typeof value === "number" && isFinite(value) && value >= 0
+      && Math.floor(value) === value && value <= 9007199254740991
+  }
+  function addTrafficBytes(current, increment) {
+    if (!validTrafficBytes(current) || !validTrafficBytes(increment)
+        || current > 9007199254740991 - increment) return null
+    return current + increment
+  }
+  function resetTrafficSession() { trafficSession = null }
+  function observeTraffic(data, task) {
+    if (data.state === "disconnected") { resetTrafficSession(); return }
+    if (data.state !== "connected") return
+
+    const device = data.device
+    const interfaceIndex = data.interface_index
+    if (typeof device !== "string" || !device.length || device.length > 15
+        || typeof interfaceIndex !== "number" || !isFinite(interfaceIndex)
+        || interfaceIndex <= 0 || Math.floor(interfaceIndex) !== interfaceIndex) {
+      if (trafficSession) trafficSession = Object.assign({}, trafficSession, { available: false })
+      return
+    }
+
+    const rawValid = validTrafficBytes(data.download_bytes) && validTrafficBytes(data.upload_bytes)
+    const current = task === "connect" ? null : trafficSession
+    if (!current) {
+      const startedByWidget = task === "connect"
+      trafficSession = {
+        device: device, interfaceIndex: interfaceIndex,
+        downloadBytes: startedByWidget && rawValid ? data.download_bytes : 0,
+        uploadBytes: startedByWidget && rawValid ? data.upload_bytes : 0,
+        lastDownload: rawValid ? data.download_bytes : null,
+        lastUpload: rawValid ? data.upload_bytes : null,
+        countNextRaw: startedByWidget && !rawValid,
+        available: rawValid
+      }
+      return
+    }
+
+    const sameInterface = current.device === device && current.interfaceIndex === interfaceIndex
+    if (!rawValid) {
+      trafficSession = sameInterface ? {
+        device: current.device, interfaceIndex: current.interfaceIndex,
+        downloadBytes: current.downloadBytes, uploadBytes: current.uploadBytes,
+        lastDownload: current.lastDownload, lastUpload: current.lastUpload,
+        countNextRaw: current.countNextRaw, available: false
+      } : {
+        device: device, interfaceIndex: interfaceIndex,
+        downloadBytes: current.downloadBytes, uploadBytes: current.uploadBytes,
+        lastDownload: null, lastUpload: null, countNextRaw: true, available: false
+      }
+      return
+    }
+
+    const downloadIncrement = !sameInterface ? data.download_bytes
+      : current.countNextRaw ? data.download_bytes
+      : current.lastDownload === null ? 0
+      : data.download_bytes >= current.lastDownload ? data.download_bytes - current.lastDownload : data.download_bytes
+    const uploadIncrement = !sameInterface ? data.upload_bytes
+      : current.countNextRaw ? data.upload_bytes
+      : current.lastUpload === null ? 0
+      : data.upload_bytes >= current.lastUpload ? data.upload_bytes - current.lastUpload : data.upload_bytes
+    const downloadBytes = addTrafficBytes(current.downloadBytes, downloadIncrement)
+    const uploadBytes = addTrafficBytes(current.uploadBytes, uploadIncrement)
+    trafficSession = {
+      device: device, interfaceIndex: interfaceIndex,
+      downloadBytes: downloadBytes, uploadBytes: uploadBytes,
+      lastDownload: data.download_bytes, lastUpload: data.upload_bytes,
+      countNextRaw: false, available: downloadBytes !== null && uploadBytes !== null
+    }
   }
   function stopRecovery(reason) {
     recoveryArmed = false
@@ -213,6 +286,7 @@ Ui.BarWidget {
   }
   function observeState(data, task) {
     clockNow = Date.now()
+    observeTraffic(data, task)
     if (data.state === "unknown") noteStateFailure()
     else {
       lastStatusAt = clockNow
@@ -412,6 +486,7 @@ Ui.BarWidget {
   }
   function invoke(task) {
     if (working) return
+    if (task === "connect") resetTrafficSession()
     if (["connect", "switch", "disconnect", "release-protection"].indexOf(task) >= 0) stopRecovery("Manual operation · Automatic attempts cancelled")
     if (task === "recover") {
       if (!recoveryEnabled || !recoveryArmed || recoveryAttempts >= 2 || !validTarget(recoveryTarget)

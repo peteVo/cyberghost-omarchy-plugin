@@ -358,14 +358,32 @@ Ui.Panel {
               Column {
                 width: (parent.width - parent.spacing) / 2
                 spacing: Style.space(4)
-                Label { text: "Downloaded"; font.pixelSize: Style.font.bodySmall; horizontalAlignment: Text.AlignHCenter }
-                Label { text: root.connected && root.vpn && !root.vpn.statusStale && !root.vpn.statusFailed ? root.byteLabel(root.vpn.snapshot.download_bytes) : "—"; horizontalAlignment: Text.AlignHCenter }
+                Label {
+                  text: "Session download"
+                  font.pixelSize: Style.font.bodySmall
+                  horizontalAlignment: Text.AlignHCenter
+                  Accessible.description: "In-memory total across observed tunnel switches. Resets on disconnect, a new connection, backend or profile change, or shell restart."
+                }
+                Label {
+                  text: root.connected && root.vpn && root.vpn.trafficSession && root.vpn.trafficSession.available
+                    && !root.vpn.statusStale && !root.vpn.statusFailed ? root.byteLabel(root.vpn.trafficSession.downloadBytes) : "—"
+                  horizontalAlignment: Text.AlignHCenter
+                }
               }
               Column {
                 width: (parent.width - parent.spacing) / 2
                 spacing: Style.space(4)
-                Label { text: "Uploaded"; font.pixelSize: Style.font.bodySmall; horizontalAlignment: Text.AlignHCenter }
-                Label { text: root.connected && root.vpn && !root.vpn.statusStale && !root.vpn.statusFailed ? root.byteLabel(root.vpn.snapshot.upload_bytes) : "—"; horizontalAlignment: Text.AlignHCenter }
+                Label {
+                  text: "Session upload"
+                  font.pixelSize: Style.font.bodySmall
+                  horizontalAlignment: Text.AlignHCenter
+                  Accessible.description: "In-memory total across observed tunnel switches. Resets on disconnect, a new connection, backend or profile change, or shell restart."
+                }
+                Label {
+                  text: root.connected && root.vpn && root.vpn.trafficSession && root.vpn.trafficSession.available
+                    && !root.vpn.statusStale && !root.vpn.statusFailed ? root.byteLabel(root.vpn.trafficSession.uploadBytes) : "—"
+                  horizontalAlignment: Text.AlignHCenter
+                }
               }
             }
             Row {
