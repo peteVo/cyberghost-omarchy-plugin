@@ -237,9 +237,14 @@ network-protection evidence and do not repeat all earlier feature tests.
 
 Home traffic totals read only the selected tunnel's kernel interface counters,
 without privilege or additional commands beyond the existing link observation.
-Counters are not persisted or included in the shareable diagnostic report.
-They reset with interface recreation and do not prove delivery, provider billing
-or privacy protection. Unknown/stale values remain unknown. The Home IP action
+The widget accumulates sampled deltas in memory across identified interface
+changes; it resets on a reported disconnect, a new connect, backend/profile
+change, or shell restart.
+When first observing an already-connected tunnel it starts at that fresh sample.
+An interface replaced between samples may leave unobserved bytes out of the
+total. Counters are not persisted or included in the shareable diagnostic
+report. They do not prove delivery, provider billing or privacy protection.
+Unknown/stale values remain unknown. The Home IP action
 uses the existing explicit third-party, tunnel-bound IPv4 lookup; it does not
 add automatic requests. Connected native dark/light and actual Home lookup
 checks preserved the pre-existing guard and restored the theme; no new VPN

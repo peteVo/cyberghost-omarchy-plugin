@@ -41,11 +41,15 @@ iproute2 and Polkit dependencies.
 Home puts connection state and the circular connect/disconnect control first,
 with requested or client-reported location, the last public IPv4 lookup (or an
 explicit placeholder), protocol and duration. Home also offers an explicit IP
-lookup and downloaded/uploaded tunnel totals. Totals use kernel interface byte
-counters, refresh with status (normally every 15 seconds), and reset when the
-interface is recreated, including switching or recovery. They are not provider
-billing totals or a measure of protection; unavailable/stale values show a dash.
-The manual-profile backend does not currently supply these counters. Quick Connect is on Home;
+lookup and session download/upload totals. The widget accumulates valid kernel
+counter deltas in memory across tunnel switches and recovery, then resets them
+on a reported disconnect, a new connect, backend/profile change, or shell
+restart. When Omarchy first
+observes an already-connected tunnel, tracking begins at that first fresh
+sample. Status normally refreshes every 15 seconds; a tunnel replaced between
+samples can lose its unobserved final bytes. Totals are not provider billing
+or proof of protection. Stale or unavailable values show a dash. The manual-
+profile backend does not currently supply these counters. Quick Connect is on Home;
 Locations retains discovery, server selection and switching. Details shows
 health, freshness and verification context. Settings groups Preferences,
 Safety (recovery, kill switch and protection actions) and Support (setup and

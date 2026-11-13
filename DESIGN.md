@@ -144,8 +144,12 @@ every feature was retested. Captures under
 `build/ui-redesign/` remain private and unpublished; this pass adds no network
 protection evidence.
 
-Home traffic extension: downloaded/uploaded totals sit above protocol/duration
-using the same native two-column layout. Unknown/stale counters stay unknown;
+Home traffic extension: session download/upload totals sit above protocol/duration
+using the same native two-column layout. The running widget accumulates validated
+counter deltas across identified tunnel generations in memory; it resets on
+disconnect, a new connection, backend/profile change or shell restart. An
+initially observed connection starts tracking from its first fresh sample.
+Unknown/stale counters stay unknown;
 zero remains a real zero. The explicit IP action stays on Home with last-lookup
 age and a tooltip identifying the third-party service. No automatic IP requests,
 new privileges, dependencies or background processes are introduced.

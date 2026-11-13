@@ -22,7 +22,7 @@ function widget() {
     Quickshell: { execDetached: args => calls.notify.push(args) },
     Qt: { callLater: fn => calls.later.push(fn) },
     settings: {}, moduleName: 'test', bar: { moduleWidgets: () => peers },
-    snapshot: { state: 'disconnected', can_connect: true },
+    snapshot: { state: 'disconnected', can_connect: true }, trafficSession: null,
     backendMode: 'official-cli', dynamicMode: true, setupReady: true,
     working: false, protocolRefresh: false, selectedProtocol: 'wireguard',
     selectedCountry: '', selectedCity: '', selectedServer: '', selectionRevision: 0,
@@ -56,7 +56,7 @@ function widget() {
   };
   context.root = context;
   peers = [context];
-  for (const name of ['validTarget', 'favoriteKey', 'startSavedTarget', 'quickConnect', 'completeSavedTarget', 'selectServer', 'cancelSavedTarget', 'cancelQuickConnect', 'notify', 'observeState', 'observeRecovery', 'recoverableState', 'setRecovery', 'stopRecovery', 'clearHealth', 'noteStateFailure', 'selectBackend', 'selectProfile', 'selectCountry', 'arrayFrom', 'finish']) {
+  for (const name of ['validTarget', 'favoriteKey', 'startSavedTarget', 'quickConnect', 'completeSavedTarget', 'selectServer', 'cancelSavedTarget', 'cancelQuickConnect', 'notify', 'validTrafficBytes', 'addTrafficBytes', 'resetTrafficSession', 'observeTraffic', 'observeState', 'observeRecovery', 'recoverableState', 'setRecovery', 'stopRecovery', 'clearHealth', 'noteStateFailure', 'selectBackend', 'selectProfile', 'selectCountry', 'arrayFrom', 'finish']) {
     vm.runInNewContext(functionSource(name), context);
   }
   return context;
@@ -567,4 +567,68 @@ test('Home byte labels distinguish zero, unknown and binary units', () => {
   assert.equal(format(1048576), '1.0 MiB');
   for (const value of [undefined, null, -1, NaN, Infinity, '1024', 2 ** 53])
     assert.equal(format(value), '—');
+});
+
+test('session traffic accumulates observed deltas across interface generations', () => {
+  const w = widget();
+  const sample = (interface_index, download_bytes, upload_bytes) => ({
+    state: 'connected', device: 'cyberghost', interface_index, download_bytes, upload_bytes,
+  });
+
+  w.observeTraffic(sample(7, 1000, 500), 'status');
+  assert.deepEqual(plain(w.trafficSession), {
+    device: 'cyberghost', interfaceIndex: 7, downloadBytes: 0, uploadBytes: 0,
+    lastDownload: 1000, lastUpload: 500, countNextRaw: false, available: true,
+  });
+  w.observeTraffic(sample(7, 1300, 650), 'status');
+  assert.equal(w.trafficSession.downloadBytes, 300);
+  assert.equal(w.trafficSession.uploadBytes, 150);
+
+  w.observeTraffic(sample(8, 20, 10), 'switch');
+  assert.equal(w.trafficSession.downloadBytes, 320);
+  assert.equal(w.trafficSession.uploadBytes, 160);
+  w.observeTraffic(sample(8, 70, 25), 'status');
+  assert.equal(w.trafficSession.downloadBytes, 370);
+  assert.equal(w.trafficSession.uploadBytes, 175);
+
+  w.observeTraffic(sample(8, 3, 2), 'status');
+  assert.equal(w.trafficSession.downloadBytes, 373);
+  assert.equal(w.trafficSession.uploadBytes, 177);
+});
+
+test('session traffic resets on disconnect and starts fresh on a new connection', () => {
+  const w = widget();
+  w.observeTraffic({ state: 'connected', device: 'cyberghost', interface_index: 7,
+    download_bytes: 900, upload_bytes: 400 }, 'status');
+  w.observeTraffic({ state: 'disconnected' }, 'status');
+  assert.equal(w.trafficSession, null);
+
+  w.observeTraffic({ state: 'connected', device: 'cyberghost', interface_index: 8,
+    download_bytes: 25, upload_bytes: 15 }, 'connect');
+  assert.equal(w.trafficSession.downloadBytes, 25);
+  assert.equal(w.trafficSession.uploadBytes, 15);
+});
+
+test('invalid traffic identity/counters and inexact sums stay unavailable', () => {
+  const w = widget();
+  w.observeTraffic({ state: 'connected', device: 'cyberghost', interface_index: 7,
+    download_bytes: 10, upload_bytes: 5 }, 'status');
+  w.observeTraffic({ state: 'connected', device: 'cyberghost', interface_index: 7,
+    download_bytes: true, upload_bytes: 5 }, 'status');
+  assert.equal(w.trafficSession.available, false);
+  w.observeTraffic({ state: 'connected', device: '', interface_index: 7,
+    download_bytes: 5, upload_bytes: 5 }, 'status');
+  assert.equal(w.trafficSession.available, false);
+  w.observeTraffic({ state: 'connected', device: 'cyberghost', interface_index: 7,
+    download_bytes: 15, upload_bytes: 8 }, 'status');
+  assert.equal(w.trafficSession.downloadBytes, 5);
+  assert.equal(w.trafficSession.uploadBytes, 3);
+  assert.equal(w.trafficSession.available, true);
+
+  w.observeTraffic({ state: 'connected', device: 'cyberghost', interface_index: 7,
+    download_bytes: Number.MAX_SAFE_INTEGER, upload_bytes: 0 }, 'connect');
+  w.observeTraffic({ state: 'connected', device: 'cyberghost', interface_index: 8,
+    download_bytes: 1, upload_bytes: 0 }, 'switch');
+  assert.equal(w.trafficSession.available, false);
+  assert.equal(w.trafficSession.downloadBytes, null);
 });
